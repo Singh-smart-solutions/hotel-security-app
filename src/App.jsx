@@ -101,22 +101,36 @@ export default function App() {
     }
   };
 
+  const clearAutofillFields = () => {
+    setFullName('');
+    setMobileNumber('');
+    setCompanyName('');
+    setVehiclePlate('');
+    setHostDept('');
+  };
+
   const handleDocSearch = (val) => {
     setDocNumber(val);
-    if (val.length >= 3) {
-      const match = logs.find(l => 
+    if (val.trim().length < 3) {
+      clearAutofillFields();
+      return;
+    }
+
+    const match = logs.find(l =>
         l.doc_number.toLowerCase().includes(val.toLowerCase()) || 
         (l.vehicle_plate && l.vehicle_plate.toLowerCase().includes(val.toLowerCase())) ||
         (l.mobile_number && l.mobile_number.includes(val))
-      );
-      if (match) {
-        setFullName(match.full_name);
-        setMobileNumber(match.mobile_number || '');
-        setCompanyName(match.company_name || '');
-        setVehiclePlate(match.vehicle_plate || '');
-        setHostDept(match.host_room_or_dept || '');
-      }
+    );
+    if (!match) {
+      clearAutofillFields();
+      return;
     }
+
+    setFullName(match.full_name);
+    setMobileNumber(match.mobile_number || '');
+    setCompanyName(match.company_name || '');
+    setVehiclePlate(match.vehicle_plate || '');
+    setHostDept(match.host_room_or_dept || '');
   };
 
   const handleCheckIn = async (e) => {
@@ -494,6 +508,29 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                       </div>
                     );
                   })
+                )}
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+              <h2 className="text-base font-bold">Recent Check-Outs</h2>
+              <div className="divide-y divide-slate-800 max-h-64 overflow-y-auto">
+                {logs.filter(l => l.status === 'checked_out').slice(0, 10).map((item) => (
+                  <div key={item.id} className="py-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-sm text-white">{item.full_name}</div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        Pass #{item.pass_badge_no} {item.company_name && <span>• {item.company_name}</span>}
+                      </div>
+                    </div>
+                    <div className="text-right text-xs font-mono whitespace-nowrap">
+                      <div className="text-emerald-400">In: {new Date(item.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                      <div className="text-amber-400">Out: {item.check_out_time ? new Date(item.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</div>
+                    </div>
+                  </div>
+                ))}
+                {logs.every(l => l.status !== 'checked_out') && (
+                  <div className="py-6 text-center text-slate-500 text-sm">No completed check-outs yet.</div>
                 )}
               </div>
             </div>
