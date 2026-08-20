@@ -1,6 +1,6 @@
 alter table public.hotel_security_logs
   add column if not exists nationality text,
-  add column if not exists expiry_date date;
+  add column if not exists id_expiry_date date;
 
 create index if not exists hotel_security_logs_doc_number_idx
   on public.hotel_security_logs (doc_number);

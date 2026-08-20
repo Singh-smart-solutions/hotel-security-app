@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import * as XLSX from 'xlsx';
 import { parse as parseMrz } from 'mrz';
 import { createWorker } from 'tesseract.js';
+import { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } from '@zxing/library';
 import { 
   Shield, Truck, Wrench, Users, UserCheck, Search, 
   LogOut, Clock, AlertTriangle, Download, Smartphone, Camera, X, ScanLine
@@ -30,13 +31,19 @@ export default function App() {
   const [allowedHours, setAllowedHours] = useState(0.75);
   const [statusMsg, setStatusMsg] = useState('');
   const [nationality, setNationality] = useState('');
-  const [expiryDate, setExpiryDate] = useState('');
+  const [idExpiryDate, setIdExpiryDate] = useState('');
   const [showDocumentScanner, setShowDocumentScanner] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [scannerMsg, setScannerMsg] = useState('');
   const videoRef = useRef(null);
+  const scannerCanvasRef = useRef(null);
   const cameraStreamRef = useRef(null);
+  const scanLoopRef = useRef(null);
+  const scanBusyRef = useRef(false);
+  const mrzWorkerRef = useRef(null);
+  const barcodeReaderRef = useRef(null);
+  const barcodeDetectorRef = useRef(null);
   const lookupRequestRef = useRef(0);
   const preserveScanFieldsRef = useRef(false);
 
@@ -65,10 +72,6 @@ export default function App() {
     else if (trafficType === 'casual_staff_banquet') setAllowedHours(9.0);
     else if (trafficType === 'hotel_guest_visitor') setAllowedHours(2.0);
   }, [trafficType]);
-
-  useEffect(() => () => {
-    cameraStreamRef.current?.getTracks().forEach(track => track.stop());
-  }, []);
 
   const fetchActiveLogs = async () => {
     const { data } = await supabase
@@ -131,7 +134,7 @@ export default function App() {
     setVehiclePlate('');
     setHostDept('');
     setNationality('');
-    setExpiryDate('');
+    setIdExpiryDate('');
   };
 
   const applyVisitorMatch = (match) => {
@@ -141,7 +144,7 @@ export default function App() {
     setVehiclePlate(match.vehicle_plate || '');
     setHostDept(match.host_room_or_dept || '');
     setNationality(match.nationality || '');
-    setExpiryDate(match.expiry_date || '');
+    setIdExpiryDate(match.id_expiry_date || match.expiry_date || '');
   };
 
   const handleDocSearch = (val) => {
@@ -169,7 +172,7 @@ export default function App() {
       if (!safeQuery) return;
       const { data, error } = await supabase
         .from('hotel_security_logs')
-        .select('full_name, mobile_number, company_name, vehicle_plate, host_room_or_dept, nationality, expiry_date, doc_number')
+        .select('full_name, mobile_number, company_name, vehicle_plate, host_room_or_dept, nationality, id_expiry_date, doc_number')
         .or(`doc_number.ilike.%${safeQuery}%,mobile_number.ilike.%${safeQuery}%,vehicle_plate.ilike.%${safeQuery}%`)
         .order('check_in_time', { ascending: false })
         .limit(1);
@@ -190,9 +193,24 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [docNumber]);
 
-  const closeDocumentScanner = () => {
+  const stopDocumentScanner = () => {
+    scanLoopRef.current = null;
+    scanBusyRef.current = false;
+    barcodeReaderRef.current?.reset();
+    barcodeReaderRef.current = null;
+    if (mrzWorkerRef.current) {
+      mrzWorkerRef.current.terminate();
+      mrzWorkerRef.current = null;
+    }
     cameraStreamRef.current?.getTracks().forEach(track => track.stop());
     cameraStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
+
+  useEffect(() => () => stopDocumentScanner(), []);
+
+  const closeDocumentScanner = () => {
+    stopDocumentScanner();
     setShowDocumentScanner(false);
     setIsScanning(false);
     setCameraReady(false);
@@ -208,9 +226,16 @@ export default function App() {
         audio: false,
       });
       cameraStreamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
       setCameraReady(true);
-      setScannerMsg('Align the passport or ID MRZ inside the frame.');
+      setIsScanning(true);
+      setScannerMsg('Live scan active: align an Emirates ID barcode or passport MRZ.');
+      requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+          startLiveScanner();
+        }
+      });
     } catch (error) {
       setCameraReady(false);
       setScannerMsg(`Camera unavailable: ${error.message}`);
@@ -227,47 +252,135 @@ export default function App() {
     return `20${value.slice(0, 2)}-${value.slice(2, 4)}-${value.slice(4, 6)}`;
   };
 
-  const scanDocument = async () => {
-    if (!videoRef.current) return;
-    setIsScanning(true);
-    setScannerMsg('Reading MRZ... keep the document steady.');
+  const parseBarcodePayload = (text) => {
+    const lines = text.split(/[\r\n|;]/).map(line => line.trim()).filter(Boolean);
+    const findValue = (labels) => {
+      const line = lines.find(value => labels.some(label => value.toLowerCase().includes(label)));
+      return line ? line.split(/[:=]/).slice(1).join(':').trim() : '';
+    };
+    const documentNumber = findValue(['id number', 'identity number', 'document number']) || text.match(/784-?\d{4}-?\d{7}-?\d/)?.[0] || text.match(/\b\d{15}\b/)?.[0] || '';
+    const expiry = findValue(['expiry', 'expiration', 'date of expiry']).replace(/[^0-9]/g, '');
+    const expiryDate = expiry.length === 8
+      ? `${expiry.slice(4, 8)}-${expiry.slice(2, 4)}-${expiry.slice(0, 2)}`
+      : '';
+    return {
+      documentNumber,
+      fullName: findValue(['full name', 'name']),
+      nationality: findValue(['nationality', 'country']),
+      expiryDate,
+    };
+  };
+
+  const applyScanResult = ({ documentNumber, fullName: scannedName, nationality: scannedNationality, expiryDate }) => {
+    if (!documentNumber && !scannedName) return;
+    preserveScanFieldsRef.current = true;
+    if (documentNumber) setDocNumber(documentNumber.replace(/</g, ''));
+    if (scannedName) setFullName(scannedName.replace(/</g, ' ').replace(/\s+/g, ' ').trim());
+    if (scannedNationality) setNationality(scannedNationality.replace(/</g, '').trim());
+    if (expiryDate) setIdExpiryDate(expiryDate);
+    if ('vibrate' in navigator) navigator.vibrate(100);
+    setStatusMsg(expiryIsPast(expiryDate) ? '⚠️ EXPIRED DOCUMENT' : 'Document locked successfully.');
+    closeDocumentScanner();
+  };
+
+  const runMrzPass = async () => {
+    const video = videoRef.current;
+    const canvas = scannerCanvasRef.current;
+    if (!video || !canvas || !mrzWorkerRef.current || scanBusyRef.current) return;
+    scanBusyRef.current = true;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const sourceWidth = video.videoWidth;
+    const sourceHeight = video.videoHeight;
+    if (!sourceWidth || !sourceHeight) {
+      scanBusyRef.current = false;
+      return;
+    }
+    canvas.width = 640;
+    canvas.height = 160;
+    context.drawImage(video, sourceWidth * 0.1, sourceHeight * 0.75, sourceWidth * 0.8, sourceHeight * 0.25, 0, 0, 640, 160);
+    const pixels = context.getImageData(0, 0, 640, 160);
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      const luminance = (pixels.data[index] * 0.299) + (pixels.data[index + 1] * 0.587) + (pixels.data[index + 2] * 0.114);
+      const value = luminance > 145 ? 255 : 0;
+      pixels.data[index] = value;
+      pixels.data[index + 1] = value;
+      pixels.data[index + 2] = value;
+    }
+    context.putImageData(pixels, 0, 0);
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
-      canvas.getContext('2d').drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-      const worker = await createWorker('eng');
-      const { data: { text } } = await worker.recognize(canvas);
-      await worker.terminate();
+      const { data: { text } } = await mrzWorkerRef.current.recognize(canvas);
       const lines = normalizeMrzLines(text);
-      let parsed;
-      for (let size = 2; size <= 3 && !parsed; size += 1) {
-        for (let index = 0; index <= lines.length - size; index += 1) {
-          try {
-            const candidate = parseMrz(lines.slice(index, index + size), { autocorrect: true });
-            if (candidate.documentNumber && candidate.fields?.expirationDate) parsed = candidate;
-          } catch {
-            // OCR often returns unrelated text around the MRZ; keep trying windows.
+      for (let index = 0; index < lines.length - 1; index += 1) {
+        try {
+          const candidate = parseMrz(lines.slice(index, index + 2), { autocorrect: true });
+          if (candidate.format === 'TD3' && candidate.documentNumber && candidate.fields?.expirationDate) {
+            const fields = candidate.fields;
+            applyScanResult({
+              documentNumber: candidate.documentNumber,
+              fullName: [fields.firstName, fields.lastName].filter(Boolean).join(' '),
+              nationality: fields.nationality,
+              expiryDate: mrzDateToIso(fields.expirationDate),
+            });
+            return;
           }
+        } catch {
+          // Continue over nearby OCR line pairs until a valid TD3 MRZ locks.
         }
       }
-      if (!parsed) throw new Error('No valid MRZ found. Move closer and try again.');
-
-      const fields = parsed.fields;
-      const name = [fields.firstName, fields.lastName].filter(Boolean).join(' ');
-      const nextExpiryDate = mrzDateToIso(fields.expirationDate);
-      preserveScanFieldsRef.current = true;
-      setDocNumber(parsed.documentNumber);
-      setFullName(name);
-      setNationality(fields.nationality || '');
-      setExpiryDate(nextExpiryDate);
-      setStatusMsg(expiryIsPast(nextExpiryDate) ? 'Document read, but it is expired.' : 'Document read successfully.');
-      closeDocumentScanner();
-    } catch (error) {
-      setScannerMsg(error.message);
     } finally {
-      setIsScanning(false);
+      scanBusyRef.current = false;
     }
+  };
+
+  const startLiveScanner = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const targetFormats = ['pdf417', 'qr_code', 'code_128'];
+    if ('BarcodeDetector' in window) {
+      const supported = await window.BarcodeDetector.getSupportedFormats();
+      const formats = targetFormats.filter(format => supported.includes(format));
+      if (formats.length) barcodeDetectorRef.current = new window.BarcodeDetector({ formats });
+    }
+    if (!barcodeDetectorRef.current) {
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.PDF_417, BarcodeFormat.QR_CODE, BarcodeFormat.CODE_128]);
+      barcodeReaderRef.current = new BrowserMultiFormatReader(hints);
+    }
+    mrzWorkerRef.current = await createWorker('eng');
+    let lastMrzPass = 0;
+    const loop = async (timestamp) => {
+      if (!cameraStreamRef.current || !video.videoWidth) return;
+      try {
+        const nativeResults = barcodeDetectorRef.current ? await barcodeDetectorRef.current.detect(video) : [];
+        if (nativeResults.length) {
+          applyScanResult(parseBarcodePayload(nativeResults[0].rawValue));
+          return;
+        }
+        if (barcodeReaderRef.current && scannerCanvasRef.current) {
+          const canvas = scannerCanvasRef.current;
+          canvas.width = 640;
+          canvas.height = 360;
+          canvas.getContext('2d').drawImage(video, 0, 0, 640, 360);
+          try {
+            const result = barcodeReaderRef.current.decodeFromCanvas(canvas);
+            if (result) {
+              applyScanResult(parseBarcodePayload(result.getText()));
+              return;
+            }
+          } catch {
+            // No barcode in this frame; continue with the live loop.
+          }
+        }
+        if (timestamp - lastMrzPass > 350) {
+          lastMrzPass = timestamp;
+          runMrzPass();
+        }
+      } catch (error) {
+        setScannerMsg(`Live scan error: ${error.message}`);
+      }
+      scanLoopRef.current = requestAnimationFrame(loop);
+    };
+    scanLoopRef.current = requestAnimationFrame(loop);
   };
 
   const handleCheckIn = async (e) => {
@@ -285,7 +398,7 @@ export default function App() {
       company_name: companyName,
       vehicle_plate: vehiclePlate,
       nationality,
-      expiry_date: expiryDate || null,
+      id_expiry_date: idExpiryDate || null,
       traffic_type: trafficType,
       purpose_of_visit: purpose || 'Standard Entry',
       host_room_or_dept: hostDept || 'General BOH',
@@ -306,7 +419,7 @@ export default function App() {
       setHostDept('');
       setPassBadgeNo('');
       setNationality('');
-      setExpiryDate('');
+      setIdExpiryDate('');
       setStatusMsg('Check-In Successful!');
       fetchActiveLogs();
     }
@@ -336,7 +449,7 @@ export default function App() {
       "Company": l.company_name,
       "Vehicle Plate": l.vehicle_plate,
       "Nationality": l.nationality,
-      "Expiry Date": l.expiry_date || '',
+      "ID Expiry Date": l.id_expiry_date || '',
       "Traffic Type": l.traffic_type,
       "Destination": l.host_room_or_dept,
       "Status": l.status,
@@ -510,19 +623,11 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                   </div>
                   <div className="relative overflow-hidden rounded-lg bg-black aspect-video">
                     <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
-                    <div className="pointer-events-none absolute inset-[12%] rounded-lg border-2 border-blue-400/80" />
+                    <div className={`pointer-events-none absolute inset-x-[10%] bottom-[5%] h-[25%] rounded-lg border-2 border-cyan-300 ${isScanning ? 'animate-pulse shadow-[0_0_18px_rgba(103,232,249,0.9)]' : ''}`} />
+                    <div className="pointer-events-none absolute bottom-[7%] left-[12%] right-[12%] border-t border-cyan-200/70" />
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs text-slate-400">{scannerMsg}</p>
-                    <button
-                      type="button"
-                      onClick={scanDocument}
-                      disabled={isScanning || !cameraReady}
-                      className="shrink-0 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-lg text-xs font-bold text-white"
-                    >
-                      {isScanning ? 'Reading...' : 'Capture MRZ'}
-                    </button>
-                  </div>
+                  <canvas ref={scannerCanvasRef} width="640" height="160" className="hidden" />
+                  <p className="text-xs text-slate-400">{scannerMsg || (cameraReady ? 'Live scan active...' : 'Starting camera...')}</p>
                 </div>
               )}
 
@@ -613,11 +718,11 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                     <label className="block text-xs font-medium text-slate-400 mb-1">Document Expiry</label>
                     <input
                       type="date"
-                      value={expiryDate}
-                      onChange={(e) => setExpiryDate(e.target.value)}
-                      className={`w-full bg-slate-950 border rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 ${expiryIsPast(expiryDate) ? 'border-red-500' : 'border-slate-700'}`}
+                      value={idExpiryDate}
+                      onChange={(e) => setIdExpiryDate(e.target.value)}
+                      className={`w-full bg-slate-950 border rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 ${expiryIsPast(idExpiryDate) ? 'border-red-500' : 'border-slate-700'}`}
                     />
-                    {expiryIsPast(expiryDate) && <div className="mt-1 inline-flex items-center rounded-md border border-red-500/60 bg-red-600/20 px-2 py-1 text-xs font-bold text-red-300">EXPIRED DOCUMENT - DO NOT ADMIT</div>}
+                    {expiryIsPast(idExpiryDate) && <div className="mt-1 inline-flex items-center rounded-md border border-red-500/60 bg-red-600/20 px-2 py-1 text-xs font-bold text-red-300">⚠️ EXPIRED</div>}
                   </div>
 
                   <div>
