@@ -175,16 +175,23 @@ export default function App() {
   };
 
   const exportToExcel = () => {
-    const loadingBayLogs = logs.filter(l => l.traffic_type === 'supplier_delivery' || l.traffic_type === 'contractor_engineer');
-    const guestLogs = logs.filter(l => l.traffic_type === 'hotel_guest_visitor' || l.traffic_type === 'casual_staff_banquet');
+    const formatted = logs.map(l => ({
+      "Pass Badge": l.pass_badge_no,
+      "Full Name": l.full_name,
+      "Company": l.company_name,
+      "Vehicle Plate": l.vehicle_plate,
+      "Traffic Type": l.traffic_type,
+      "Destination": l.host_room_or_dept,
+      "Status": l.status,
+      "Check-In Time": l.check_in_time ? new Date(l.check_in_time).toLocaleString() : '',
+      "Check-Out Time": l.check_out_time ? new Date(l.check_out_time).toLocaleString() : 'Still Inside',
+      "Logged By Guard": l.logged_by_guard,
+      "Checked Out By": l.checkout_by_guard || '-'
+    }));
 
     const wb = XLSX.utils.book_new();
-    const ws1 = XLSX.utils.json_to_sheet(loadingBayLogs);
-    const ws2 = XLSX.utils.json_to_sheet(guestLogs);
-
-    XLSX.utils.book_append_sheet(wb, ws1, 'Loading Bay & Contractors');
-    XLSX.utils.book_append_sheet(wb, ws2, 'Guests & Banquet Casuals');
-
+    const ws = XLSX.utils.json_to_sheet(formatted);
+    XLSX.utils.book_append_sheet(wb, ws, 'Visitor & Contractor Logs');
     XLSX.writeFile(wb, `Hotel_Security_Report_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
@@ -274,7 +281,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 pb-12">
+    <div className="min-h-screen bg-slate-950 text-slate-100 pb-12 font-sans">
       <header className="bg-slate-900 border-b border-slate-800 px-4 py-3 sticky top-0 z-30 flex justify-between items-center">
         <div className="flex items-center gap-3">
           <Shield className="w-6 h-6 text-blue-500" />
@@ -287,7 +294,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
         <div className="flex gap-2">
           <button 
             onClick={() => setViewMode(viewMode === 'guard' ? 'manager' : 'guard')} 
-            className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs font-medium hover:bg-slate-700"
+            className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs font-medium hover:bg-slate-700 text-white"
           >
             {viewMode === 'guard' ? 'Manager View' : 'Guard View'}
           </button>
@@ -300,7 +307,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto p-4 space-y-6">
+      <main className="max-w-5xl mx-auto p-4 space-y-6">
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl">
             <div className="text-xs text-slate-400 font-medium">Inside Now</div>
@@ -313,7 +320,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
             </div>
           </div>
           <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl">
-            <div className="text-xs text-slate-400 font-medium">Today's Total</div>
+            <div className="text-xs text-slate-400 font-medium">Total Processed</div>
             <div className="text-2xl font-bold text-emerald-400 mt-1">{logs.length}</div>
           </div>
         </div>
@@ -381,7 +388,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                       placeholder="e.g. Al Rawabi, Otis, Farnek"
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
 
@@ -392,7 +399,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                       placeholder="e.g. DXB A 45892"
                       value={vehiclePlate}
                       onChange={(e) => setVehiclePlate(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
 
@@ -403,7 +410,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                       placeholder="e.g. Main Kitchen, Plant Room"
                       value={hostDept}
                       onChange={(e) => setHostDept(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
                     />
                   </div>
 
@@ -416,7 +423,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                         placeholder="Pass # or NFC Tap"
                         value={passBadgeNo}
                         onChange={(e) => setPassBadgeNo(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white font-mono"
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
                       />
                       <button
                         type="button"
@@ -432,7 +439,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
 
                 {statusMsg && <div className="text-xs text-blue-400 font-mono">{statusMsg}</div>}
 
-                <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white shadow-lg">
+                <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-white shadow-lg transition-all">
                   Confirm Check-In & Issue Pass
                 </button>
               </form>
@@ -495,51 +502,95 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
 
         {viewMode === 'manager' && (
           <div className="space-y-4">
-            <div className="flex justify-between items-center bg-slate-900 border border-slate-800 p-4 rounded-xl">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-900 border border-slate-800 p-4 rounded-xl">
               <div>
-                <h2 className="font-bold text-base">Security Audit Dashboard</h2>
-                <p className="text-xs text-slate-400">Live property log analytics & exports</p>
+                <h2 className="font-bold text-base text-white">Security Audit Log & Time Tracking</h2>
+                <p className="text-xs text-slate-400">All check-ins, check-outs, and duration records</p>
               </div>
               <button
                 onClick={exportToExcel}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-2 shadow"
               >
-                <Download className="w-4 h-4" /> Export 2-Sheet Excel (.xlsx)
+                <Download className="w-4 h-4" /> Export Excel Log (.xlsx)
               </button>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="p-3">Pass #</th>
-                    <th className="p-3">Name / Company</th>
-                    <th className="p-3">Type</th>
-                    <th className="p-3">Check-In</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Logged By</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {logs.slice(0, 20).map((l) => (
-                    <tr key={l.id} className="hover:bg-slate-800/40">
-                      <td className="p-3 font-mono text-blue-400">#{l.pass_badge_no}</td>
-                      <td className="p-3">
-                        <div className="font-medium text-white">{l.full_name}</div>
-                        <div className="text-slate-500 text-[11px]">{l.company_name || l.doc_number}</div>
-                      </td>
-                      <td className="p-3 uppercase text-[10px] text-slate-400">{l.traffic_type.replace('_', ' ')}</td>
-                      <td className="p-3 text-slate-400">{new Date(l.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${l.status === 'inside' ? 'bg-blue-600/30 text-blue-300' : 'bg-slate-800 text-slate-400'}`}>
-                          {l.status}
-                        </span>
-                      </td>
-                      <td className="p-3 text-slate-400">{l.logged_by_guard}</td>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                    <tr>
+                      <th className="p-3">Pass #</th>
+                      <th className="p-3">Name / Company</th>
+                      <th className="p-3">Type</th>
+                      <th className="p-3">Check-In</th>
+                      <th className="p-3">Check-Out (Exit)</th>
+                      <th className="p-3">Duration</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3">Guard</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 text-slate-300">
+                    {logs.length === 0 ? (
+                      <tr>
+                        <td colSpan="8" className="p-6 text-center text-slate-500">No logs found.</td>
+                      </tr>
+                    ) : (
+                      logs.map((l) => {
+                        const inTime = l.check_in_time ? new Date(l.check_in_time) : null;
+                        const outTime = l.check_out_time ? new Date(l.check_out_time) : null;
+                        
+                        let durationDisplay = '-';
+                        if (inTime && outTime) {
+                          const diffMinutes = Math.round((outTime - inTime) / 60000);
+                          if (diffMinutes < 60) {
+                            durationDisplay = `${diffMinutes}m`;
+                          } else {
+                            const hrs = (diffMinutes / 60).toFixed(1);
+                            durationDisplay = `${hrs}h`;
+                          }
+                        } else if (inTime && l.status === 'inside') {
+                          const diffMinutes = Math.round((now - inTime) / 60000);
+                          durationDisplay = diffMinutes < 60 ? `${diffMinutes}m (Active)` : `${(diffMinutes / 60).toFixed(1)}h (Active)`;
+                        }
+
+                        return (
+                          <tr key={l.id} className="hover:bg-slate-800/50 transition-colors">
+                            <td className="p-3 font-mono text-blue-400 font-bold">#{l.pass_badge_no}</td>
+                            <td className="p-3">
+                              <div className="font-semibold text-white">{l.full_name}</div>
+                              <div className="text-slate-400 text-[11px]">{l.company_name || l.doc_number}</div>
+                            </td>
+                            <td className="p-3 uppercase text-[10px] text-slate-400">{l.traffic_type?.replace(/_/g, ' ')}</td>
+                            <td className="p-3 font-mono text-emerald-400 whitespace-nowrap">
+                              {inTime ? inTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}
+                            </td>
+                            <td className="p-3 font-mono text-amber-400 whitespace-nowrap">
+                              {outTime ? (
+                                outTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-300 font-medium">Still Inside</span>
+                              )}
+                            </td>
+                            <td className="p-3 font-mono text-slate-300">{durationDisplay}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                l.status === 'inside' ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40' : 'bg-slate-800 text-slate-400'
+                              }`}>
+                                {l.status === 'inside' ? 'Inside' : 'Checked Out'}
+                              </span>
+                            </td>
+                            <td className="p-3 text-slate-400 text-[11px]">
+                              <div>In: {l.logged_by_guard}</div>
+                              {l.checkout_by_guard && <div className="text-slate-500 text-[10px]">Out: {l.checkout_by_guard}</div>}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -563,7 +614,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                 placeholder="e.g. Chiller contractor still in Plant Room until 22:00..."
                 value={handoverNotes}
                 onChange={(e) => setHandoverNotes(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-white"
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-white focus:outline-none focus:border-blue-500"
               />
             </div>
 
@@ -571,14 +622,14 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
               <button
                 type="button"
                 onClick={() => setShowHandoverModal(false)}
-                className="flex-1 py-2.5 bg-slate-800 rounded-lg text-xs font-bold"
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold text-slate-300"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleEndShift}
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 rounded-lg text-xs font-bold text-white"
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 rounded-lg text-xs font-bold text-white shadow-lg"
               >
                 Copy WhatsApp & End
               </button>
