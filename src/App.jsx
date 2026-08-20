@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import * as XLSX from 'xlsx';
+import { parse as parseMrz } from 'mrz';
+import { createWorker } from 'tesseract.js';
 import { 
   Shield, Truck, Wrench, Users, UserCheck, Search, 
-  LogOut, Clock, AlertTriangle, Download, Smartphone
+  LogOut, Clock, AlertTriangle, Download, Smartphone, Camera, X, ScanLine
 } from 'lucide-react';
 
 export default function App() {
@@ -27,6 +29,16 @@ export default function App() {
   const [passBadgeNo, setPassBadgeNo] = useState('');
   const [allowedHours, setAllowedHours] = useState(0.75);
   const [statusMsg, setStatusMsg] = useState('');
+  const [nationality, setNationality] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+  const [showDocumentScanner, setShowDocumentScanner] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [scannerMsg, setScannerMsg] = useState('');
+  const videoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const lookupRequestRef = useRef(0);
+  const preserveScanFieldsRef = useRef(false);
 
   useEffect(() => {
     const savedShift = localStorage.getItem('active_hotel_shift');
@@ -53,6 +65,10 @@ export default function App() {
     else if (trafficType === 'casual_staff_banquet') setAllowedHours(9.0);
     else if (trafficType === 'hotel_guest_visitor') setAllowedHours(2.0);
   }, [trafficType]);
+
+  useEffect(() => () => {
+    cameraStreamRef.current?.getTracks().forEach(track => track.stop());
+  }, []);
 
   const fetchActiveLogs = async () => {
     const { data } = await supabase
@@ -101,36 +117,157 @@ export default function App() {
     }
   };
 
+  const expiryIsPast = (value) => {
+    if (!value) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return new Date(`${value}T00:00:00`) < today;
+  };
+
   const clearAutofillFields = () => {
     setFullName('');
     setMobileNumber('');
     setCompanyName('');
     setVehiclePlate('');
     setHostDept('');
+    setNationality('');
+    setExpiryDate('');
   };
 
-  const handleDocSearch = (val) => {
-    setDocNumber(val);
-    if (val.trim().length < 3) {
-      clearAutofillFields();
-      return;
-    }
-
-    const match = logs.find(l =>
-        l.doc_number.toLowerCase().includes(val.toLowerCase()) || 
-        (l.vehicle_plate && l.vehicle_plate.toLowerCase().includes(val.toLowerCase())) ||
-        (l.mobile_number && l.mobile_number.includes(val))
-    );
-    if (!match) {
-      clearAutofillFields();
-      return;
-    }
-
-    setFullName(match.full_name);
+  const applyVisitorMatch = (match) => {
+    setFullName(match.full_name || '');
     setMobileNumber(match.mobile_number || '');
     setCompanyName(match.company_name || '');
     setVehiclePlate(match.vehicle_plate || '');
     setHostDept(match.host_room_or_dept || '');
+    setNationality(match.nationality || '');
+    setExpiryDate(match.expiry_date || '');
+  };
+
+  const handleDocSearch = (val) => {
+    setDocNumber(val);
+    if (val.trim().length < 4) {
+      clearAutofillFields();
+      return;
+    }
+
+    const localMatch = logs.find(log =>
+      [log.doc_number, log.mobile_number, log.vehicle_plate]
+        .filter(Boolean)
+        .some(value => String(value).toLowerCase().includes(val.trim().toLowerCase()))
+    );
+    if (localMatch) applyVisitorMatch(localMatch);
+  };
+
+  useEffect(() => {
+    const query = docNumber.trim();
+    if (query.length < 4) return undefined;
+
+    const requestId = ++lookupRequestRef.current;
+    const timer = setTimeout(async () => {
+      const safeQuery = query.replace(/[^a-zA-Z0-9]/g, '');
+      if (!safeQuery) return;
+      const { data, error } = await supabase
+        .from('hotel_security_logs')
+        .select('full_name, mobile_number, company_name, vehicle_plate, host_room_or_dept, nationality, expiry_date, doc_number')
+        .or(`doc_number.ilike.%${safeQuery}%,mobile_number.ilike.%${safeQuery}%,vehicle_plate.ilike.%${safeQuery}%`)
+        .order('check_in_time', { ascending: false })
+        .limit(1);
+
+      if (requestId !== lookupRequestRef.current) return;
+      if (error || !data?.[0]) {
+        if (preserveScanFieldsRef.current) {
+          preserveScanFieldsRef.current = false;
+          return;
+        }
+        clearAutofillFields();
+      } else {
+        preserveScanFieldsRef.current = false;
+        applyVisitorMatch(data[0]);
+      }
+    }, 180);
+
+    return () => clearTimeout(timer);
+  }, [docNumber]);
+
+  const closeDocumentScanner = () => {
+    cameraStreamRef.current?.getTracks().forEach(track => track.stop());
+    cameraStreamRef.current = null;
+    setShowDocumentScanner(false);
+    setIsScanning(false);
+    setCameraReady(false);
+    setScannerMsg('');
+  };
+
+  const openDocumentScanner = async () => {
+    setShowDocumentScanner(true);
+    setScannerMsg('Requesting camera access...');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCameraReady(true);
+      setScannerMsg('Align the passport or ID MRZ inside the frame.');
+    } catch (error) {
+      setCameraReady(false);
+      setScannerMsg(`Camera unavailable: ${error.message}`);
+    }
+  };
+
+  const normalizeMrzLines = (text) => text
+    .split(/\r?\n/)
+    .map(line => line.toUpperCase().replace(/[^A-Z0-9<]/g, ''))
+    .filter(line => line.includes('<') && line.length >= 25);
+
+  const mrzDateToIso = (value) => {
+    if (!value || value.length !== 6 || value.includes('<')) return '';
+    return `20${value.slice(0, 2)}-${value.slice(2, 4)}-${value.slice(4, 6)}`;
+  };
+
+  const scanDocument = async () => {
+    if (!videoRef.current) return;
+    setIsScanning(true);
+    setScannerMsg('Reading MRZ... keep the document steady.');
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      canvas.getContext('2d').drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      const worker = await createWorker('eng');
+      const { data: { text } } = await worker.recognize(canvas);
+      await worker.terminate();
+      const lines = normalizeMrzLines(text);
+      let parsed;
+      for (let size = 2; size <= 3 && !parsed; size += 1) {
+        for (let index = 0; index <= lines.length - size; index += 1) {
+          try {
+            const candidate = parseMrz(lines.slice(index, index + size), { autocorrect: true });
+            if (candidate.documentNumber && candidate.fields?.expirationDate) parsed = candidate;
+          } catch {
+            // OCR often returns unrelated text around the MRZ; keep trying windows.
+          }
+        }
+      }
+      if (!parsed) throw new Error('No valid MRZ found. Move closer and try again.');
+
+      const fields = parsed.fields;
+      const name = [fields.firstName, fields.lastName].filter(Boolean).join(' ');
+      const nextExpiryDate = mrzDateToIso(fields.expirationDate);
+      preserveScanFieldsRef.current = true;
+      setDocNumber(parsed.documentNumber);
+      setFullName(name);
+      setNationality(fields.nationality || '');
+      setExpiryDate(nextExpiryDate);
+      setStatusMsg(expiryIsPast(nextExpiryDate) ? 'Document read, but it is expired.' : 'Document read successfully.');
+      closeDocumentScanner();
+    } catch (error) {
+      setScannerMsg(error.message);
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const handleCheckIn = async (e) => {
@@ -147,6 +284,8 @@ export default function App() {
       mobile_number: mobileNumber,
       company_name: companyName,
       vehicle_plate: vehiclePlate,
+      nationality,
+      expiry_date: expiryDate || null,
       traffic_type: trafficType,
       purpose_of_visit: purpose || 'Standard Entry',
       host_room_or_dept: hostDept || 'General BOH',
@@ -166,6 +305,8 @@ export default function App() {
       setPurpose('');
       setHostDept('');
       setPassBadgeNo('');
+      setNationality('');
+      setExpiryDate('');
       setStatusMsg('Check-In Successful!');
       fetchActiveLogs();
     }
@@ -194,6 +335,8 @@ export default function App() {
       "Full Name": l.full_name,
       "Company": l.company_name,
       "Vehicle Plate": l.vehicle_plate,
+      "Nationality": l.nationality,
+      "Expiry Date": l.expiry_date || '',
       "Traffic Type": l.traffic_type,
       "Destination": l.host_room_or_dept,
       "Status": l.status,
@@ -342,9 +485,46 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
         {viewMode === 'guard' && (
           <>
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
-              <h2 className="text-base font-bold mb-4 flex items-center gap-2">
-                <UserCheck className="w-5 h-5 text-blue-400" /> Fast Pass Check-In
-              </h2>
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h2 className="text-base font-bold flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-blue-400" /> Fast Pass Check-In
+                </h2>
+                <button
+                  type="button"
+                  onClick={openDocumentScanner}
+                  className="px-3 py-2 bg-blue-600/20 border border-blue-500/40 text-blue-300 hover:bg-blue-600/30 rounded-lg text-xs font-bold flex items-center gap-2"
+                >
+                  <Camera className="w-4 h-4" /> Scan Document
+                </button>
+              </div>
+
+              {showDocumentScanner && (
+                <div className="mb-4 rounded-xl border border-blue-500/30 bg-slate-950 p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-blue-300 flex items-center gap-2">
+                      <ScanLine className="w-4 h-4" /> Passport / Emirates ID MRZ Scanner
+                    </div>
+                    <button type="button" onClick={closeDocumentScanner} className="text-slate-400 hover:text-white" title="Close scanner">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="relative overflow-hidden rounded-lg bg-black aspect-video">
+                    <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+                    <div className="pointer-events-none absolute inset-[12%] rounded-lg border-2 border-blue-400/80" />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-slate-400">{scannerMsg}</p>
+                    <button
+                      type="button"
+                      onClick={scanDocument}
+                      disabled={isScanning || !cameraReady}
+                      className="shrink-0 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-lg text-xs font-bold text-white"
+                    >
+                      {isScanning ? 'Reading...' : 'Capture MRZ'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <form onSubmit={handleCheckIn} className="space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -381,6 +561,7 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                       />
                       <Search className="w-4 h-4 text-slate-500 absolute right-3 top-3" />
                     </div>
+                      <div className="mt-1 text-[11px] text-slate-500">Enter any 4 digits from document, mobile, or plate for history autofill.</div>
                   </div>
 
                   <div>
@@ -415,6 +596,28 @@ ${overstays.map(o => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o.c
                       onChange={(e) => setVehiclePlate(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">Nationality</label>
+                    <input
+                      type="text"
+                      placeholder="From MRZ scan"
+                      value={nationality}
+                      onChange={(e) => setNationality(e.target.value.toUpperCase())}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">Document Expiry</label>
+                    <input
+                      type="date"
+                      value={expiryDate}
+                      onChange={(e) => setExpiryDate(e.target.value)}
+                      className={`w-full bg-slate-950 border rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 ${expiryIsPast(expiryDate) ? 'border-red-500' : 'border-slate-700'}`}
+                    />
+                    {expiryIsPast(expiryDate) && <div className="mt-1 inline-flex items-center rounded-md border border-red-500/60 bg-red-600/20 px-2 py-1 text-xs font-bold text-red-300">EXPIRED DOCUMENT - DO NOT ADMIT</div>}
                   </div>
 
                   <div>
