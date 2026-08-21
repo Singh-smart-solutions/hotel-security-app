@@ -6,6 +6,7 @@ import {
   Shield, Truck, Wrench, Users, UserCheck, Search,
   LogOut, AlertTriangle, Download, Smartphone, Camera, X, ScanLine,
   Mail, Lock, LogIn, Loader2, CheckCircle2, AlertCircle, Info, Clock,
+  UserPlus, Ban, ShieldCheck,
 } from 'lucide-react';
 
 /* ---------- design tokens (Tailwind class fragments) ---------- */
@@ -205,6 +206,15 @@ export default function App() {
   const [isIdExpired, setIsIdExpired] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Manager / guard accounts
+  const [myRole, setMyRole] = useState(null);
+  const [guards, setGuards] = useState([]);
+  const [guardsLoading, setGuardsLoading] = useState(false);
+  const [newGuardName, setNewGuardName] = useState('');
+  const [newGuardEmail, setNewGuardEmail] = useState('');
+  const [newGuardPassword, setNewGuardPassword] = useState('');
+  const [guardBusy, setGuardBusy] = useState(false);
+
   // Scanner
   const [showDocumentScanner, setShowDocumentScanner] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -266,10 +276,59 @@ export default function App() {
     return () => { supabase.removeChannel(subscription); };
   }, [session, fetchActiveLogs]);
 
+  // Detect whether the signed-in user is a manager.
+  useEffect(() => {
+    if (!session) { setMyRole(null); return; }
+    supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', session.user.id)
+      .maybeSingle()
+      .then(({ data }) => setMyRole(data?.role || 'guard'));
+  }, [session]);
+
   useEffect(() => {
     const match = TRAFFIC_TYPES.find((t) => t.id === trafficType);
     if (match) setAllowedHours(match.hours);
   }, [trafficType]);
+
+  /* ---------------- Guard account management (managers only) ---------------- */
+  const loadGuards = useCallback(async () => {
+    setGuardsLoading(true);
+    const { data, error } = await supabase.functions.invoke('manage-guards', { body: { action: 'list' } });
+    if (error || !data?.success) notify(error?.message || data?.error || 'Failed to load guard accounts', 'error');
+    else setGuards(data.users);
+    setGuardsLoading(false);
+  }, [notify]);
+
+  useEffect(() => {
+    if (viewMode === 'manager' && myRole === 'manager') loadGuards();
+  }, [viewMode, myRole, loadGuards]);
+
+  const createGuard = async (e) => {
+    e.preventDefault();
+    if (!newGuardEmail.trim() || newGuardPassword.length < 6) {
+      return notify('Email and a password of 6+ characters are required', 'error');
+    }
+    setGuardBusy(true);
+    const { data, error } = await supabase.functions.invoke('manage-guards', {
+      body: { action: 'create', email: newGuardEmail.trim(), password: newGuardPassword, full_name: newGuardName.trim() },
+    });
+    setGuardBusy(false);
+    if (error || !data?.success) return notify(error?.message || data?.error || 'Could not create account', 'error');
+    notify('Guard account created', 'success');
+    setNewGuardName(''); setNewGuardEmail(''); setNewGuardPassword('');
+    loadGuards();
+  };
+
+  const toggleGuardDisabled = async (g) => {
+    const { data, error } = await supabase.functions.invoke('manage-guards', {
+      body: { action: 'set_disabled', user_id: g.id, disabled: !g.disabled },
+    });
+    if (error || !data?.success) return notify(error?.message || data?.error || 'Update failed', 'error');
+    notify(g.disabled ? 'Account re-enabled' : 'Account disabled', 'success');
+    loadGuards();
+  };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -1083,6 +1142,87 @@ ${overstays.map((o) => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o
 
         {viewMode === 'manager' && (
           <div className="space-y-4">
+            {myRole === 'manager' && (
+              <div className={`${CARD} space-y-4 p-5`}>
+                <h2 className="flex items-center gap-2 text-base font-bold text-white">
+                  <ShieldCheck className="h-5 w-5 text-indigo-400" /> Guard Accounts
+                </h2>
+
+                <form onSubmit={createGuard} className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                  <input
+                    type="text"
+                    placeholder="Guard name"
+                    value={newGuardName}
+                    onChange={(e) => setNewGuardName(e.target.value)}
+                    className={INPUT}
+                  />
+                  <input
+                    type="email"
+                    required
+                    placeholder="Email"
+                    value={newGuardEmail}
+                    onChange={(e) => setNewGuardEmail(e.target.value)}
+                    className={INPUT}
+                  />
+                  <input
+                    type="password"
+                    required
+                    placeholder="Password (6+ chars)"
+                    value={newGuardPassword}
+                    onChange={(e) => setNewGuardPassword(e.target.value)}
+                    className={INPUT}
+                  />
+                  <button type="submit" disabled={guardBusy} className={`${BTN_PRIMARY} py-2.5`}>
+                    {guardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                    Add Guard
+                  </button>
+                </form>
+
+                <div className="divide-y divide-white/5 overflow-hidden rounded-xl border border-white/10">
+                  {guardsLoading ? (
+                    <div className="py-6 text-center text-sm text-slate-500">Loading accounts…</div>
+                  ) : guards.length === 0 ? (
+                    <div className="py-6 text-center text-sm text-slate-500">No accounts yet.</div>
+                  ) : (
+                    guards.map((g) => (
+                      <div key={g.id} className="flex items-center justify-between gap-3 bg-slate-950/40 px-3 py-2.5">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate text-sm font-semibold text-white">{g.full_name || g.email}</span>
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                              g.role === 'manager' ? 'bg-indigo-600/30 text-indigo-300' : 'bg-white/5 text-slate-400'
+                            }`}>
+                              {g.role}
+                            </span>
+                            {g.disabled && (
+                              <span className="rounded bg-red-600/20 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-300">Disabled</span>
+                            )}
+                          </div>
+                          <div className="truncate text-xs text-slate-400">{g.email}</div>
+                        </div>
+                        {g.role !== 'manager' && (
+                          <button
+                            onClick={() => toggleGuardDisabled(g)}
+                            className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+                              g.disabled
+                                ? 'border-emerald-500/30 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30'
+                                : 'border-red-500/30 bg-red-600/20 text-red-300 hover:bg-red-600/30'
+                            }`}
+                          >
+                            {g.disabled ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
+                            {g.disabled ? 'Enable' : 'Disable'}
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Disabling blocks login but keeps the account and its audit history. Managers can’t disable their own account.
+                </p>
+              </div>
+            )}
+
             <div className={`${CARD} flex flex-col items-start justify-between gap-3 p-4 sm:flex-row sm:items-center`}>
               <div>
                 <h2 className="text-base font-bold text-white">Security Audit Log & Time Tracking</h2>

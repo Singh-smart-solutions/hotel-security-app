@@ -82,6 +82,21 @@ npx supabase functions deploy scan-id
 Combined with an unauthenticated endpoint, any website can call your function. After
 auth is added, consider restricting the origin to your Vercel domain.
 
+### In-app guard account management (managers)
+
+Managers can add and disable guard logins from the Manager view instead of the
+Supabase dashboard. Account creation uses the **service-role** key, which stays
+server-side inside the `manage-guards` edge function — it is never exposed to the
+browser, and every call is rejected unless the caller is an active manager.
+
+Setup:
+1. Run `supabase-manager-roles.sql` in the SQL Editor, then edit its bootstrap
+   statement to set your own email as `manager`.
+2. Deploy the function: `npx supabase functions deploy manage-guards`
+   (the service-role key is injected automatically — no secret to set).
+3. Sign in as the manager account → **Manager View → Guard Accounts** to add or
+   disable guards.
+
 ### 5. Rotate the committed Supabase anon key — LOW
 Because the old anon key was in git history, rotate it in Supabase → Project Settings →
 API once RLS is enforced, and update the deployment env var.
