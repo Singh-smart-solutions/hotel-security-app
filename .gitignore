@@ -12,6 +12,15 @@ dist
 dist-ssr
 *.local
 
+# Environment / secrets — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Supabase CLI local state (leaks project ref / pooler host)
+supabase/.temp/
+supabase/.branches/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

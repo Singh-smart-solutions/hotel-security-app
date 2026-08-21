@@ -280,16 +280,17 @@ export default function App() {
     try {
       const image = sourceCanvas.toDataURL('image/jpeg', 0.82).split(',')[1];
       const { data, error } = await supabase.functions.invoke('scan-id', {
-        body: { image },
+        body: { imageBase64: image },
       });
       if (error) throw error;
-      if (data?.docNumber || data?.fullName) {
+      const ext = data?.extracted;
+      if (ext && (ext.docNumber || ext.fullName)) {
         applyScanResult({
-          documentNumber: data.docNumber,
-          fullName: data.fullName,
-          nationality: data.nationality,
-          expiryDate: data.expiryDate,
-          docType: data.docType,
+          documentNumber: ext.docNumber,
+          fullName: ext.fullName,
+          nationality: ext.nationality,
+          expiryDate: ext.expiryDate,
+          docType: ext.docType,
         });
       }
     } catch (error) {
