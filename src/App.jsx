@@ -284,7 +284,12 @@ export default function App() {
       .select('role')
       .eq('user_id', session.user.id)
       .maybeSingle()
-      .then(({ data }) => setMyRole(data?.role || 'guard'));
+      .then(({ data }) => {
+        const role = data?.role || 'guard';
+        setMyRole(role);
+        // Guards may only ever see the check-in terminal.
+        if (role !== 'manager') setViewMode('guard');
+      });
   }, [session]);
 
   useEffect(() => {
@@ -875,12 +880,14 @@ ${overstays.map((o) => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setViewMode(viewMode === 'guard' ? 'manager' : 'guard')}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/10"
-            >
-              {viewMode === 'guard' ? 'Manager View' : 'Guard View'}
-            </button>
+            {myRole === 'manager' && (
+              <button
+                onClick={() => setViewMode(viewMode === 'guard' ? 'manager' : 'guard')}
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/10"
+              >
+                {viewMode === 'guard' ? 'Manager View' : 'Guard View'}
+              </button>
+            )}
             <button
               onClick={() => setShowHandoverModal(true)}
               className="flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-600/20 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:bg-amber-600/30"
