@@ -222,6 +222,10 @@ export default function App() {
   const [scannerMsg, setScannerMsg] = useState('');
   const [captureStatus, setCaptureStatus] = useState('idle'); // idle | reading | success | empty
   const [captureSummary, setCaptureSummary] = useState(null);
+  // 'searching' = RED brackets (no doc detected yet)
+  // 'aligned'   = reserved for future barcode-steady detection
+  // 'captured'  = GREEN glowing border + checkmark for 400ms
+  const [viewfinderState, setViewfinderState] = useState('searching');
   const videoRef = useRef(null);
   const scannerCanvasRef = useRef(null);
   const cameraStreamRef = useRef(null);
@@ -480,12 +484,14 @@ export default function App() {
     setScannerMsg('');
     setCaptureStatus('idle');
     setCaptureSummary(null);
+    setViewfinderState('searching');
   };
 
   const openDocumentScanner = async () => {
     setShowDocumentScanner(true);
     setCaptureStatus('idle');
     setCaptureSummary(null);
+    setViewfinderState('searching');
     setScannerMsg('Requesting camera access...');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -495,7 +501,7 @@ export default function App() {
       cameraStreamRef.current = stream;
       setCameraReady(true);
       setIsScanning(true);
-      setScannerMsg('Live scan active: align an Emirates ID barcode or passport MRZ.');
+      setScannerMsg('Align your Emirates ID or Passport within the frame.');
       requestAnimationFrame(() => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -570,13 +576,14 @@ export default function App() {
     if (!documentNumber && !scannedName) return;
     const expired = applyExtractedFields({ documentNumber, fullName: scannedName, ...rest });
     beep(!expired);
-    if ('vibrate' in navigator) navigator.vibrate(120);
+    if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
+    setViewfinderState('captured');
     setStatusMsg(expired ? '⚠️ EXPIRED DOCUMENT' : 'Document locked successfully.');
     notify(expired ? '⚠️ Scanned document is EXPIRED' : 'Document scanned successfully', expired ? 'error' : 'success');
-    closeDocumentScanner();
+    setTimeout(() => closeDocumentScanner(), 400);
   };
 
-  // Manual full-frame capture -> OCR. Shows a clear success/failure result.
+  // Manual full-frame capture -> OCR via Google Cloud Vision. Shows a clear success/failure result.
   const captureAndRead = async () => {
     const video = videoRef.current;
     if (!video || !video.videoWidth) {
@@ -587,15 +594,17 @@ export default function App() {
     setCaptureSummary(null);
     setScannerMsg('Reading document…');
     try {
+      // Downscale to max 1280px wide (JPEG 0.85 quality) before sending to Vision API.
       const canvas = document.createElement('canvas');
-      const maxW = 1600;
+      const maxW = 1280;
       const scale = Math.min(1, maxW / video.videoWidth);
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
       canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+      // Strip the data-URI header before sending — the Edge Function accepts raw base64.
+      const image = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
 
-      const { data, error } = await supabase.functions.invoke('scan-id', { body: { imageBase64: image } });
+      const { data, error } = await supabase.functions.invoke('scan-id', { body: { image } });
       if (error) throw error;
       const ext = data?.extracted;
       if (ext && (ext.docNumber || ext.fullName)) {
@@ -614,13 +623,16 @@ export default function App() {
           expiryDate: ext.expiryDate,
           expired,
         });
+        // Snap viewfinder to GREEN captured state.
+        setViewfinderState('captured');
         setCaptureStatus('success');
         setScannerMsg('');
         beep(!expired);
-        if ('vibrate' in navigator) navigator.vibrate(expired ? [80, 60, 80] : 120);
+        // Triple haptic burst: tap-pause-confirmation.
+        if ('vibrate' in navigator) navigator.vibrate(expired ? [80, 60, 80] : [40, 30, 80]);
         notify(expired ? '⚠️ Document captured — EXPIRED' : 'Document captured successfully', expired ? 'error' : 'success');
-        // Give the guard a moment to see the confirmation, then close.
-        setTimeout(() => closeDocumentScanner(), 2200);
+        // Show green confirmation for 400ms then close.
+        setTimeout(() => closeDocumentScanner(), 400);
       } else {
         setCaptureStatus('empty');
         beep(false);
@@ -968,31 +980,70 @@ ${overstays.map((o) => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o
                 <div className="mb-4 space-y-3 rounded-xl border border-indigo-500/30 bg-slate-950/60 p-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-xs font-semibold text-indigo-300">
-                      <ScanLine className="h-4 w-4" /> Passport / Emirates ID MRZ Scanner
+                      <ScanLine className="h-4 w-4" /> Passport / Emirates ID Scanner
                     </div>
                     <button type="button" onClick={closeDocumentScanner} className="text-slate-400 hover:text-white" title="Close scanner">
                       <X className="h-4 w-4" />
                     </button>
                   </div>
-                  <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
+
+                  {/* ── Viewfinder ── */}
+                  <div className={`relative aspect-video overflow-hidden rounded-xl bg-black transition-all duration-300 ${
+                    viewfinderState === 'captured'
+                      ? 'ring-2 ring-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.5)]'
+                      : 'ring-1 ring-white/10'
+                  }`}>
                     <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
-                    {/* Full-card alignment guide */}
-                    <div className={`pointer-events-none absolute inset-[8%] rounded-lg border-2 border-dashed ${
-                      captureStatus === 'success' ? 'border-emerald-400' : 'border-cyan-300/80'
-                    } ${isScanning && captureStatus !== 'success' ? 'animate-pulse' : ''}`} />
-                    {/* Green success flash */}
-                    {captureStatus === 'success' && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-emerald-500/25 backdrop-blur-[1px]">
-                        <div className="flex flex-col items-center gap-1 text-emerald-100">
-                          <CheckCircle2 className="h-14 w-14 drop-shadow" />
-                          <span className="text-sm font-bold">Captured</span>
+
+                    {/* Dynamic corner brackets ─ RED when searching, GREEN when captured */}
+                    {viewfinderState !== 'captured' && (
+                      <div className={`pointer-events-none absolute inset-[8%] ${
+                        isScanning ? 'animate-pulse' : ''
+                      }`}>
+                        {/* Top-left */}
+                        <span className="absolute top-0 left-0 h-6 w-6 border-t-2 border-l-2 border-red-500 rounded-tl" />
+                        {/* Top-right */}
+                        <span className="absolute top-0 right-0 h-6 w-6 border-t-2 border-r-2 border-red-500 rounded-tr" />
+                        {/* Bottom-left */}
+                        <span className="absolute bottom-0 left-0 h-6 w-6 border-b-2 border-l-2 border-red-500 rounded-bl" />
+                        {/* Bottom-right */}
+                        <span className="absolute bottom-0 right-0 h-6 w-6 border-b-2 border-r-2 border-red-500 rounded-br" />
+                        {/* Centre scan line */}
+                        <div className="absolute left-[10%] right-[10%] top-1/2 h-px -translate-y-1/2 bg-red-500/40" />
+                      </div>
+                    )}
+
+                    {/* SEARCHING label */}
+                    {viewfinderState === 'searching' && cameraReady && (
+                      <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/50 bg-black/60 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-red-400 backdrop-blur">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+                          Searching
+                        </span>
+                      </div>
+                    )}
+
+                    {/* GREEN captured overlay — shown for 400ms then scanner closes */}
+                    {viewfinderState === 'captured' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-emerald-500/20 backdrop-blur-[1px]">
+                        <div className="flex flex-col items-center gap-2">
+                          <CheckCircle2 className="h-16 w-16 text-emerald-400 drop-shadow-[0_0_12px_rgba(16,185,129,0.9)]" />
+                          <span className="text-sm font-bold tracking-wide text-emerald-100">Captured</span>
                         </div>
                       </div>
                     )}
+
+                    {/* Reading spinner overlay */}
+                    {captureStatus === 'reading' && viewfinderState !== 'captured' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[1px]">
+                        <Loader2 className="h-10 w-10 animate-spin text-indigo-400" />
+                      </div>
+                    )}
                   </div>
+
                   <canvas ref={scannerCanvasRef} width="640" height="160" className="hidden" />
 
-                  {/* Captured-data confirmation */}
+                  {/* Captured-data confirmation card */}
                   {captureStatus === 'success' && captureSummary && (
                     <div className="space-y-1 rounded-lg border border-emerald-500/40 bg-emerald-950/50 p-3 text-xs">
                       <div className="mb-1 flex items-center gap-1.5 font-bold text-emerald-300">
@@ -1031,9 +1082,13 @@ ${overstays.map((o) => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o
                     </button>
                   </div>
 
-                  <p className={`text-xs ${captureStatus === 'empty' ? 'text-amber-300' : 'text-slate-400'}`}>
+                  <p className={`text-xs ${
+                    captureStatus === 'empty' ? 'text-amber-300'
+                    : viewfinderState === 'captured' ? 'text-emerald-400'
+                    : 'text-slate-400'
+                  }`}>
                     {scannerMsg || (cameraReady
-                      ? 'Fill the frame with the ID or passport, then tap Capture & Read. Emirates ID barcodes auto-fill instantly.'
+                      ? 'Fill the frame with the document and tap Capture & Read. Emirates ID barcodes auto-fill instantly.'
                       : 'Starting camera…')}
                   </p>
                 </div>
