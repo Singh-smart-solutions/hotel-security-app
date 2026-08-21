@@ -563,8 +563,7 @@ export default function App() {
     if (documentNumber) setDocNumber(String(documentNumber).replace(/</g, ''));
     if (scannedName) setFullName(String(scannedName).replace(/</g, ' ').replace(/\s+/g, ' ').trim());
     if (scannedNationality) setNationality(String(scannedNationality).replace(/</g, '').trim());
-    if (docType === 'passport') setCompanyName('Passport');
-    if (docType === 'emirates_id') setCompanyName('Emirates ID');
+    // Do NOT auto-fill company name from doc type — guard fills this manually.
     if (expiryDate) setIdExpiryDate(expiryDate);
     const expired = expiryIsPast(expiryDate);
     setIsIdExpired(expired);
@@ -737,6 +736,10 @@ export default function App() {
     e.preventDefault();
     if (!passBadgeNo || !fullName || !docNumber) {
       return notify('Fill name, document, and assign a pass badge', 'error');
+    }
+    // Hard block — expired documents must never receive a pass.
+    if (isIdExpired) {
+      return notify('⛔ ACCESS DENIED: Document is expired. Entry cannot be issued.', 'error');
     }
     setSubmitting(true);
     const { error } = await supabase.from('hotel_security_logs').insert([{
@@ -1224,9 +1227,29 @@ ${overstays.map((o) => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o
 
                 {statusMsg && <div className="font-mono text-xs text-indigo-400">{statusMsg}</div>}
 
-                <button type="submit" disabled={submitting} className={`${BTN_PRIMARY} w-full py-3`}>
+                {/* Hard block when scanned ID is expired — access must be denied */}
+                {isIdExpired && (
+                  <div className="flex items-center gap-3 rounded-xl border-2 border-red-500 bg-red-950/60 px-4 py-3 shadow-lg shadow-red-900/40">
+                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-red-600">
+                      <AlertTriangle className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-extrabold uppercase tracking-wide text-red-300">Access Denied — Document Expired</div>
+                      <div className="mt-0.5 text-xs text-red-400">This ID has passed its expiry date. Entry cannot be issued. Ask visitor for a valid document.</div>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={submitting || isIdExpired}
+                  title={isIdExpired ? 'Cannot check in — document is expired' : ''}
+                  className={`${BTN_PRIMARY} w-full py-3 ${
+                    isIdExpired ? '!from-red-900 !to-red-900 !opacity-40 cursor-not-allowed' : ''
+                  }`}
+                >
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
-                  Confirm Check-In & Issue Pass
+                  {isIdExpired ? 'Check-In Blocked — Expired Document' : 'Confirm Check-In & Issue Pass'}
                 </button>
               </form>
             </div>
