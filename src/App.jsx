@@ -220,6 +220,8 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [scannerMsg, setScannerMsg] = useState('');
+  const [captureStatus, setCaptureStatus] = useState('idle'); // idle | reading | success | empty
+  const [captureSummary, setCaptureSummary] = useState(null);
   const videoRef = useRef(null);
   const scannerCanvasRef = useRef(null);
   const cameraStreamRef = useRef(null);
@@ -284,7 +286,12 @@ export default function App() {
       .select('role')
       .eq('user_id', session.user.id)
       .maybeSingle()
-      .then(({ data }) => setMyRole(data?.role || 'guard'));
+      .then(({ data }) => {
+        const role = data?.role || 'guard';
+        setMyRole(role);
+        // Guards may only ever see the check-in terminal.
+        if (role !== 'manager') setViewMode('guard');
+      });
   }, [session]);
 
   useEffect(() => {
@@ -471,10 +478,14 @@ export default function App() {
     setIsScanning(false);
     setCameraReady(false);
     setScannerMsg('');
+    setCaptureStatus('idle');
+    setCaptureSummary(null);
   };
 
   const openDocumentScanner = async () => {
     setShowDocumentScanner(true);
+    setCaptureStatus('idle');
+    setCaptureSummary(null);
     setScannerMsg('Requesting camera access...');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -522,77 +533,109 @@ export default function App() {
     };
   };
 
-  const applyScanResult = ({ documentNumber, fullName: scannedName, nationality: scannedNationality, expiryDate, docType }) => {
-    if (!documentNumber && !scannedName) return;
+  // Short confirmation beep (no audio asset needed).
+  const beep = (ok = true) => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = ok ? 880 : 300;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.25);
+    } catch { /* audio may be blocked; ignore */ }
+  };
+
+  // Push extracted values into the check-in form (does not close the scanner).
+  const applyExtractedFields = ({ documentNumber, fullName: scannedName, nationality: scannedNationality, expiryDate, docType }) => {
     preserveScanFieldsRef.current = true;
-    if (documentNumber) setDocNumber(documentNumber.replace(/</g, ''));
-    if (scannedName) setFullName(scannedName.replace(/</g, ' ').replace(/\s+/g, ' ').trim());
-    if (scannedNationality) setNationality(scannedNationality.replace(/</g, '').trim());
+    if (documentNumber) setDocNumber(String(documentNumber).replace(/</g, ''));
+    if (scannedName) setFullName(String(scannedName).replace(/</g, ' ').replace(/\s+/g, ' ').trim());
+    if (scannedNationality) setNationality(String(scannedNationality).replace(/</g, '').trim());
     if (docType === 'passport') setCompanyName('Passport');
     if (docType === 'emirates_id') setCompanyName('Emirates ID');
     if (expiryDate) setIdExpiryDate(expiryDate);
-    setIsIdExpired(expiryIsPast(expiryDate));
-    if ('vibrate' in navigator) navigator.vibrate(100);
     const expired = expiryIsPast(expiryDate);
+    setIsIdExpired(expired);
+    return expired;
+  };
+
+  // Used by the on-device barcode path (auto): fill + confirm + close.
+  const applyScanResult = ({ documentNumber, fullName: scannedName, ...rest }) => {
+    if (!documentNumber && !scannedName) return;
+    const expired = applyExtractedFields({ documentNumber, fullName: scannedName, ...rest });
+    beep(!expired);
+    if ('vibrate' in navigator) navigator.vibrate(120);
     setStatusMsg(expired ? '⚠️ EXPIRED DOCUMENT' : 'Document locked successfully.');
     notify(expired ? '⚠️ Scanned document is EXPIRED' : 'Document scanned successfully', expired ? 'error' : 'success');
     closeDocumentScanner();
   };
 
-  const scanFrameWithApi = async (sourceCanvas) => {
-    if (apiScanBusyRef.current || !sourceCanvas) return;
-    apiScanBusyRef.current = true;
+  // Manual full-frame capture -> OCR. Shows a clear success/failure result.
+  const captureAndRead = async () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      setScannerMsg('Camera not ready yet — hold on a second and try again.');
+      return;
+    }
+    setCaptureStatus('reading');
+    setCaptureSummary(null);
+    setScannerMsg('Reading document…');
     try {
-      const image = sourceCanvas.toDataURL('image/jpeg', 0.82).split(',')[1];
-      const { data, error } = await supabase.functions.invoke('scan-id', {
-        body: { imageBase64: image },
-      });
+      const canvas = document.createElement('canvas');
+      const maxW = 1600;
+      const scale = Math.min(1, maxW / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+
+      const { data, error } = await supabase.functions.invoke('scan-id', { body: { imageBase64: image } });
       if (error) throw error;
       const ext = data?.extracted;
       if (ext && (ext.docNumber || ext.fullName)) {
-        applyScanResult({
+        const expired = applyExtractedFields({
           documentNumber: ext.docNumber,
           fullName: ext.fullName,
           nationality: ext.nationality,
           expiryDate: ext.expiryDate,
           docType: ext.docType,
         });
+        setCaptureSummary({
+          docType: ext.docType,
+          docNumber: ext.docNumber,
+          fullName: ext.fullName,
+          nationality: ext.nationality,
+          expiryDate: ext.expiryDate,
+          expired,
+        });
+        setCaptureStatus('success');
+        setScannerMsg('');
+        beep(!expired);
+        if ('vibrate' in navigator) navigator.vibrate(expired ? [80, 60, 80] : 120);
+        notify(expired ? '⚠️ Document captured — EXPIRED' : 'Document captured successfully', expired ? 'error' : 'success');
+        // Give the guard a moment to see the confirmation, then close.
+        setTimeout(() => closeDocumentScanner(), 2200);
+      } else {
+        setCaptureStatus('empty');
+        beep(false);
+        setScannerMsg(data?.error || 'No ID data detected. Fill the frame with the card, hold steady, and capture again.');
       }
-    } catch (error) {
-      setScannerMsg(`Secure OCR unavailable: ${error.message}`);
-    } finally {
-      apiScanBusyRef.current = false;
+    } catch (err) {
+      setCaptureStatus('empty');
+      beep(false);
+      setScannerMsg(`Scan failed: ${err.message}`);
     }
   };
 
-  const runMrzPass = async () => {
-    const video = videoRef.current;
-    const canvas = scannerCanvasRef.current;
-    if (!video || !canvas || scanBusyRef.current) return;
-    scanBusyRef.current = true;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    const sourceWidth = video.videoWidth;
-    const sourceHeight = video.videoHeight;
-    if (!sourceWidth || !sourceHeight) {
-      scanBusyRef.current = false;
-      return;
-    }
-    canvas.width = 640;
-    canvas.height = 160;
-    context.drawImage(video, sourceWidth * 0.1, sourceHeight * 0.75, sourceWidth * 0.8, sourceHeight * 0.25, 0, 0, 640, 160);
-    const pixels = context.getImageData(0, 0, 640, 160);
-    for (let index = 0; index < pixels.data.length; index += 4) {
-      const luminance = (pixels.data[index] * 0.299) + (pixels.data[index + 1] * 0.587) + (pixels.data[index + 2] * 0.114);
-      const value = luminance > 145 ? 255 : 0;
-      pixels.data[index] = value;
-      pixels.data[index + 1] = value;
-      pixels.data[index + 2] = value;
-    }
-    context.putImageData(pixels, 0, 0);
-    await scanFrameWithApi(canvas);
-    scanBusyRef.current = false;
-  };
-
+  // Live loop: on-device barcode detection only (free, instant). It auto-fills
+  // when an Emirates ID PDF417 / QR barcode is in view. Full OCR for the printed
+  // side and passport MRZ is done on demand by the "Capture & Read" button.
   const startLiveScanner = async () => {
     const video = videoRef.current;
     if (!video) return;
@@ -607,18 +650,12 @@ export default function App() {
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.PDF_417, BarcodeFormat.QR_CODE, BarcodeFormat.CODE_128]);
       barcodeReaderRef.current = new BrowserMultiFormatReader(hints);
     }
-    let lastMrzPass = 0;
-    const loop = async (timestamp) => {
+    const loop = async () => {
       if (!cameraStreamRef.current || !video.videoWidth) return;
       try {
         const nativeResults = barcodeDetectorRef.current ? await barcodeDetectorRef.current.detect(video) : [];
         if (nativeResults.length) {
           applyScanResult(parseBarcodePayload(nativeResults[0].rawValue));
-          const barcodeCanvas = document.createElement('canvas');
-          barcodeCanvas.width = 1280;
-          barcodeCanvas.height = 720;
-          barcodeCanvas.getContext('2d').drawImage(video, 0, 0, 1280, 720);
-          await scanFrameWithApi(barcodeCanvas);
           return;
         }
         if (barcodeReaderRef.current && scannerCanvasRef.current) {
@@ -630,16 +667,11 @@ export default function App() {
             const result = barcodeReaderRef.current.decodeFromCanvas(canvas);
             if (result) {
               applyScanResult(parseBarcodePayload(result.getText()));
-              await scanFrameWithApi(canvas);
               return;
             }
           } catch {
-            // No barcode in this frame; continue with the live loop.
+            // No barcode in this frame; keep looping.
           }
-        }
-        if (timestamp - lastMrzPass > 350) {
-          lastMrzPass = timestamp;
-          runMrzPass();
         }
       } catch (error) {
         setScannerMsg(`Live scan error: ${error.message}`);
@@ -875,12 +907,14 @@ ${overstays.map((o) => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setViewMode(viewMode === 'guard' ? 'manager' : 'guard')}
-              className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/10"
-            >
-              {viewMode === 'guard' ? 'Manager View' : 'Guard View'}
-            </button>
+            {myRole === 'manager' && (
+              <button
+                onClick={() => setViewMode(viewMode === 'guard' ? 'manager' : 'guard')}
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-white/10"
+              >
+                {viewMode === 'guard' ? 'Manager View' : 'Guard View'}
+              </button>
+            )}
             <button
               onClick={() => setShowHandoverModal(true)}
               className="flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-600/20 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:bg-amber-600/30"
@@ -942,11 +976,66 @@ ${overstays.map((o) => `• ⚠️ Pass #${o.pass_badge_no}: ${o.full_name} (${o
                   </div>
                   <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
                     <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
-                    <div className={`pointer-events-none absolute inset-x-[10%] bottom-[5%] h-[25%] rounded-lg border-2 border-cyan-300 ${isScanning ? 'animate-pulse shadow-[0_0_18px_rgba(103,232,249,0.9)]' : ''}`} />
-                    <div className="pointer-events-none absolute bottom-[7%] left-[12%] right-[12%] border-t border-cyan-200/70" />
+                    {/* Full-card alignment guide */}
+                    <div className={`pointer-events-none absolute inset-[8%] rounded-lg border-2 border-dashed ${
+                      captureStatus === 'success' ? 'border-emerald-400' : 'border-cyan-300/80'
+                    } ${isScanning && captureStatus !== 'success' ? 'animate-pulse' : ''}`} />
+                    {/* Green success flash */}
+                    {captureStatus === 'success' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-emerald-500/25 backdrop-blur-[1px]">
+                        <div className="flex flex-col items-center gap-1 text-emerald-100">
+                          <CheckCircle2 className="h-14 w-14 drop-shadow" />
+                          <span className="text-sm font-bold">Captured</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <canvas ref={scannerCanvasRef} width="640" height="160" className="hidden" />
-                  <p className="text-xs text-slate-400">{scannerMsg || (cameraReady ? 'Live scan active...' : 'Starting camera...')}</p>
+
+                  {/* Captured-data confirmation */}
+                  {captureStatus === 'success' && captureSummary && (
+                    <div className="space-y-1 rounded-lg border border-emerald-500/40 bg-emerald-950/50 p-3 text-xs">
+                      <div className="mb-1 flex items-center gap-1.5 font-bold text-emerald-300">
+                        <CheckCircle2 className="h-4 w-4" /> Data captured
+                      </div>
+                      {captureSummary.fullName && <div><span className="text-slate-400">Name:</span> <span className="font-semibold text-white">{captureSummary.fullName}</span></div>}
+                      {captureSummary.docNumber && <div><span className="text-slate-400">{captureSummary.docType === 'passport' ? 'Passport #' : 'ID #'}:</span> <span className="font-mono font-semibold text-white">{captureSummary.docNumber}</span></div>}
+                      {captureSummary.nationality && <div><span className="text-slate-400">Nationality:</span> <span className="font-semibold text-white">{captureSummary.nationality}</span></div>}
+                      {captureSummary.expiryDate && (
+                        <div>
+                          <span className="text-slate-400">Expiry:</span>{' '}
+                          <span className={`font-semibold ${captureSummary.expired ? 'text-red-300' : 'text-white'}`}>
+                            {captureSummary.expiryDate}{captureSummary.expired ? ' ⚠️ EXPIRED' : ''}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={captureAndRead}
+                      disabled={captureStatus === 'reading' || !cameraReady}
+                      className={`${BTN_PRIMARY} flex-1 py-2.5`}
+                    >
+                      {captureStatus === 'reading' ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
+                      {captureStatus === 'reading' ? 'Reading…' : 'Capture & Read'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={closeDocumentScanner}
+                      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-bold text-slate-300 transition hover:bg-white/10"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <p className={`text-xs ${captureStatus === 'empty' ? 'text-amber-300' : 'text-slate-400'}`}>
+                    {scannerMsg || (cameraReady
+                      ? 'Fill the frame with the ID or passport, then tap Capture & Read. Emirates ID barcodes auto-fill instantly.'
+                      : 'Starting camera…')}
+                  </p>
                 </div>
               )}
 
