@@ -1,7 +1,7 @@
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 interface ExtractedIdentity {
@@ -38,54 +38,62 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const apiKey = Deno.env.get('GOOGLE_CLOUD_VISION_API_KEY')
+    const apiKey = Deno.env.get('OCR_SPACE_API_KEY')
     if (!apiKey) {
-      console.error('Missing GOOGLE_CLOUD_VISION_API_KEY')
+      console.error('Missing OCR_SPACE_API_KEY secret')
       return new Response(
-        JSON.stringify({ error: 'Google Vision API Key not configured' }),
+        JSON.stringify({ error: 'OCR service not configured. Set the OCR_SPACE_API_KEY secret in Supabase.' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    // Strip any data-URI header so we send Vision raw base64.
-    const cleanBase64 = rawImage.replace(/^data:image\/[a-zA-Z]+;base64,/, '').trim()
+    // Strip any data-URI header — OCR.space wants raw base64 with the
+    // filetype declared separately, or a data-URI. We'll send a data-URI.
+    let cleanBase64 = rawImage.trim()
+    if (!cleanBase64.startsWith('data:')) {
+      // Re-attach a JPEG data-URI prefix if the frontend stripped it.
+      cleanBase64 = `data:image/jpeg;base64,${cleanBase64}`
+    }
 
-    const visionRes = await fetch(
-      `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requests: [
-            {
-              image: { content: cleanBase64 },
-              // DOCUMENT_TEXT_DETECTION is far more reliable for the dense,
-              // fixed-pitch text of ID cards and passport MRZ lines.
-              features: [{ type: 'DOCUMENT_TEXT_DETECTION' }]
-            }
-          ]
-        })
-      }
-    )
+    // Build multipart/form-data for OCR.space Parse API.
+    const form = new FormData()
+    form.append('base64Image', cleanBase64)
+    form.append('language', 'eng')
+    form.append('isOverlayRequired', 'false')
+    form.append('detectOrientation', 'true')
+    form.append('scale', 'true')
+    // OCR Engine 2 is more accurate for structured documents like IDs / passports.
+    form.append('OCREngine', '2')
 
-    const visionData = await visionRes.json()
-    if (!visionRes.ok || visionData.error) {
-      const message = visionData?.error?.message || `Vision API error: ${visionRes.status}`
-      console.error('Vision API Error:', message)
+    const ocrRes = await fetch('https://api.ocr.space/parse/image', {
+      method: 'POST',
+      headers: { apikey: apiKey },
+      body: form,
+    })
+
+    const ocrData = await ocrRes.json()
+
+    if (!ocrRes.ok || ocrData.IsErroredOnProcessing) {
+      const message = ocrData?.ErrorMessage?.[0] || ocrData?.ErrorDetails || `OCR.space error: ${ocrRes.status}`
+      console.error('OCR.space Error:', message)
       return new Response(
         JSON.stringify({ error: message }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const rawText: string = visionData.responses?.[0]?.fullTextAnnotation?.text || ''
+    // Concatenate text from all parsed pages/regions.
+    const rawText: string = (ocrData.ParsedResults ?? [])
+      .map((r: { ParsedText?: string }) => r.ParsedText ?? '')
+      .join('\n')
+      .trim()
 
-    if (!rawText.trim()) {
+    if (!rawText) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: 'No text recognized. Hold the document steady with good lighting.',
-          extracted: null
+          error: 'No text recognised. Hold the document steady with good lighting and fill the frame.',
+          extracted: null,
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
@@ -98,13 +106,13 @@ Deno.serve(async (req: Request) => {
       expiryDate: '',
       isExpired: false,
       docType: 'unknown',
-      rawText
+      rawText,
     }
 
-    // Vision often reads the MRZ with stray spaces; collapse them for MRZ matching.
+    // OCR.space sometimes reads MRZ with stray spaces — collapse them for pattern matching.
     const mrzText = rawText.replace(/ /g, '')
 
-    // 1. Emirates ID number: 784-YYYY-XXXXXXX-X (15 digits: 784 + 12).
+    // ── 1. Emirates ID number: 784-YYYY-XXXXXXX-X (15 digits starting with 784) ──
     const eidMatch =
       rawText.match(/784[-\s]?\d{4}[-\s]?\d{7}[-\s]?\d{1}/) ||
       rawText.match(/\b784\d{12}\b/)
@@ -117,7 +125,7 @@ Deno.serve(async (req: Request) => {
       extracted.docNumber = cleanId
     }
 
-    // 2. Passport MRZ line 1 (TD3): P<ISSSURNAME<<GIVEN<NAMES
+    // ── 2. Passport MRZ line 1 (TD3): P<ISSSURNAME<<GIVEN<NAMES ──
     const passportLine1 = mrzText.match(/P[<K]([A-Z]{3})([A-Z<]+)/)
     if (passportLine1) {
       extracted.docType = 'passport'
@@ -128,7 +136,7 @@ Deno.serve(async (req: Request) => {
       extracted.fullName = `${given} ${surname}`.replace(/\s+/g, ' ').trim()
     }
 
-    // 3. Passport MRZ line 2: number(9) check nat(3) DOB(6) check sex expiry(6)...
+    // ── 3. Passport MRZ line 2: number(9) check nat(3) DOB(6) check sex expiry(6) ──
     if (extracted.docType === 'passport') {
       const line2 = mrzText.match(/([A-Z0-9<]{9})[0-9]([A-Z]{3})([0-9]{6})[0-9]([MFX<])([0-9]{6})/)
       if (line2) {
@@ -143,7 +151,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 4. Date fallback (DD/MM/YYYY or DD-MM-YYYY) — pick the latest as expiry.
+    // ── 4. Date fallback (DD/MM/YYYY or DD-MM-YYYY) — pick the latest as expiry ──
     if (!extracted.expiryDate) {
       const dates = rawText.match(/(\d{2})[/.-](\d{2})[/.-](\d{4})/g)
       if (dates && dates.length > 0) {
@@ -157,7 +165,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 5. Expiry check.
+    // ── 5. Expiry check ──
     if (extracted.expiryDate) {
       const exp = new Date(`${extracted.expiryDate}T00:00:00`).getTime()
       if (!isNaN(exp) && exp < Date.now()) {
@@ -165,12 +173,28 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 6. Name for Emirates ID (English "Name" label, value on the next line).
+    // ── 6. Name extraction for Emirates ID (English "Name" label → next line) ──
     if (extracted.docType === 'emirates_id' && !extracted.fullName) {
       const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
       const nIdx = lines.findIndex((l) => /^name\b|name:|nom/i.test(l))
       if (nIdx !== -1 && lines[nIdx + 1]) {
         extracted.fullName = lines[nIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
+      }
+      // Fallback: look for "Name:" inline on the same line
+      if (!extracted.fullName) {
+        const nameLine = lines.find((l) => /name\s*[:=]/i.test(l))
+        if (nameLine) {
+          extracted.fullName = nameLine.replace(/.*name\s*[:=]\s*/i, '').replace(/[^a-zA-Z\s]/g, '').trim()
+        }
+      }
+    }
+
+    // ── 7. Nationality text fallback for Emirates ID ──
+    if (extracted.docType === 'emirates_id' && !extracted.nationality) {
+      const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      const nIdx = lines.findIndex((l) => /nationality|جنسية/i.test(l))
+      if (nIdx !== -1 && lines[nIdx + 1]) {
+        extracted.nationality = lines[nIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
       }
     }
 
