@@ -173,28 +173,46 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ── 6. Name extraction for Emirates ID (English "Name" label → next line) ──
+    // ── 6. Name extraction for Emirates ID ──
+    // Emirates ID layout: "Name: Satnam Singh Gurdev Singh" (value on SAME line as label).
+    // We check same-line value first; only fall back to the next line if nothing found.
     if (extracted.docType === 'emirates_id' && !extracted.fullName) {
       const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-      const nIdx = lines.findIndex((l) => /^name\b|name:|nom/i.test(l))
-      if (nIdx !== -1 && lines[nIdx + 1]) {
-        extracted.fullName = lines[nIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
+
+      // Priority 1: value is on the same line as the "Name:" label
+      const nameInline = lines.find((l) => /^name\s*[:]/i.test(l) || /name\s*:/i.test(l))
+      if (nameInline) {
+        const afterColon = nameInline.replace(/.*name\s*:\s*/i, '').trim()
+        extracted.fullName = afterColon.replace(/[^a-zA-Z\s'-]/g, '').trim()
       }
-      // Fallback: look for "Name:" inline on the same line
+
+      // Priority 2: label on one line, value on the next line
       if (!extracted.fullName) {
-        const nameLine = lines.find((l) => /name\s*[:=]/i.test(l))
-        if (nameLine) {
-          extracted.fullName = nameLine.replace(/.*name\s*[:=]\s*/i, '').replace(/[^a-zA-Z\s]/g, '').trim()
+        const nIdx = lines.findIndex((l) => /^name$/i.test(l))
+        if (nIdx !== -1 && lines[nIdx + 1]) {
+          extracted.fullName = lines[nIdx + 1].replace(/[^a-zA-Z\s'-]/g, '').trim()
         }
       }
     }
 
-    // ── 7. Nationality text fallback for Emirates ID ──
+    // ── 7. Nationality extraction for Emirates ID ──
+    // Emirates ID layout: "Nationality: India" (value on SAME line as label).
     if (extracted.docType === 'emirates_id' && !extracted.nationality) {
       const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-      const nIdx = lines.findIndex((l) => /nationality|جنسية/i.test(l))
-      if (nIdx !== -1 && lines[nIdx + 1]) {
-        extracted.nationality = lines[nIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
+
+      // Priority 1: "Nationality: India" — value on the same line
+      const natInline = lines.find((l) => /nationality\s*:/i.test(l))
+      if (natInline) {
+        const afterColon = natInline.replace(/.*nationality\s*:\s*/i, '').trim()
+        extracted.nationality = afterColon.replace(/[^a-zA-Z\s]/g, '').trim()
+      }
+
+      // Priority 2: next-line fallback (some card variants)
+      if (!extracted.nationality) {
+        const nIdx = lines.findIndex((l) => /^nationality$|^الجنسية$/i.test(l))
+        if (nIdx !== -1 && lines[nIdx + 1]) {
+          extracted.nationality = lines[nIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
+        }
       }
     }
 
