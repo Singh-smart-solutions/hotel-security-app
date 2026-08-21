@@ -196,25 +196,40 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── 7. Nationality extraction for Emirates ID ──
-    // Emirates ID layout: "Nationality: India" (value on SAME line as label).
+    // OCR.space may produce any of these variants:
+    //   a) "Nationality: India"  (label + colon + value on same line)
+    //   b) "Nationality India"   (label + value, no colon)
+    //   c) "Nationality:"        (label only) → value is on the NEXT line
+    // We try all three in order.
     if (extracted.docType === 'emirates_id' && !extracted.nationality) {
       const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
 
-      // Priority 1: "Nationality: India" — value on the same line
-      const natInline = lines.find((l) => /nationality\s*:/i.test(l))
-      if (natInline) {
-        const afterColon = natInline.replace(/.*nationality\s*:\s*/i, '').trim()
-        extracted.nationality = afterColon.replace(/[^a-zA-Z\s]/g, '').trim()
-      }
+      // Find any line that contains the word "Nationality"
+      const natIdx = lines.findIndex((l) => /nationality/i.test(l))
 
-      // Priority 2: next-line fallback (some card variants)
-      if (!extracted.nationality) {
-        const nIdx = lines.findIndex((l) => /^nationality$|^الجنسية$/i.test(l))
-        if (nIdx !== -1 && lines[nIdx + 1]) {
-          extracted.nationality = lines[nIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
+      if (natIdx !== -1) {
+        const natLine = lines[natIdx]
+
+        // Strip the keyword + any colon/slash punctuation to get the value portion
+        const afterKeyword = natLine
+          .replace(/.*nationality\s*[:/]?\s*/i, '')
+          .replace(/[^a-zA-Z\s]/g, '')
+          .trim()
+
+        if (afterKeyword.length > 1) {
+          // Variant a/b: value is on the same line
+          extracted.nationality = afterKeyword
+        } else if (natIdx + 1 < lines.length) {
+          // Variant c: value is on the next line — guard against picking up a date or label
+          const nextLine = lines[natIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
+          const looksLikeLabel = /date|birth|expiry|issuing|sex|gender|sign/i.test(nextLine)
+          if (nextLine.length > 1 && !looksLikeLabel) {
+            extracted.nationality = nextLine
+          }
         }
       }
     }
+
 
     return new Response(
       JSON.stringify({ success: true, extracted }),
