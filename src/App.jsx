@@ -605,7 +605,32 @@ export default function App() {
       const image = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
 
       const { data, error } = await supabase.functions.invoke('scan-id', { body: { image } });
-      if (error) throw error;
+
+      // Supabase wraps non-2xx Edge Function responses as FunctionsHttpError.
+      // Unwrap the actual JSON body to surface the real error from the function.
+      if (error) {
+        let friendlyMsg = error?.message || 'Unknown error';
+        try {
+          if (error?.context) {
+            const body = await error.context.json();
+            if (body?.error) friendlyMsg = body.error;
+          }
+        } catch { /* context unreadable — keep generic message */ }
+        // Map known backend errors to actionable user messages.
+        if (
+          friendlyMsg.toLowerCase().includes('api key not configured') ||
+          friendlyMsg.toLowerCase().includes('google vision') ||
+          friendlyMsg.toLowerCase().includes('google cloud')
+        ) {
+          friendlyMsg = '⚙️ OCR service not configured — ask your admin to run: supabase secrets set GOOGLE_CLOUD_VISION_API_KEY=your_key';
+        }
+        setCaptureStatus('empty');
+        beep(false);
+        setScannerMsg(friendlyMsg);
+        notify(friendlyMsg, 'error');
+        return;
+      }
+
       const ext = data?.extracted;
       if (ext && (ext.docNumber || ext.fullName)) {
         const expired = applyExtractedFields({
@@ -641,7 +666,7 @@ export default function App() {
     } catch (err) {
       setCaptureStatus('empty');
       beep(false);
-      setScannerMsg(`Scan failed: ${err.message}`);
+      setScannerMsg(`Scan failed: ${err?.message || 'Unknown error'}`);
     }
   };
 
