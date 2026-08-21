@@ -53,19 +53,22 @@ shared into this chat. Treat it as compromised:
    npx supabase secrets set GOOGLE_CLOUD_VISION_API_KEY=your-new-key
    ```
 
-### 2. Lock down Row Level Security + add authentication — HIGH
+### 2. Lock down Row Level Security — HIGH  (auth now built-in)
 The tables hold PII (Emirates ID / passport numbers, mobile numbers, nationalities).
 If the RLS policies are `USING (true)` / `WITH CHECK (true)`, anyone with the public
 anon key can read and write **every** row.
 
-The app currently has **no login** — guards just type a name. The real fix is two steps:
-1. Add Supabase Auth so guards sign in (email/password or magic link) before the
-   terminal loads.
-2. Apply `supabase-rls-hardening.sql` (added in this branch) to restrict all access to
-   the `authenticated` role.
+**Step 1 (done in code):** the app now requires a Supabase Auth login (email +
+password) before the terminal loads — see `AuthScreen` in `src/App.jsx`. Guards can no
+longer reach any data anonymously.
 
-> Do not apply the hardening SQL before adding auth, or the anon-key app will lose
-> access (which is the point — anon should not have it).
+**Step 2 (you, in the dashboard):**
+1. In Supabase → Authentication → Providers, keep **Email** enabled. Create guard
+   accounts (Authentication → Users → Add user), or let guards self-register from the
+   login screen. For a locked-down deployment, turn OFF "Enable email signups" once
+   accounts exist, and turn ON "Confirm email".
+2. Apply `supabase-rls-hardening.sql` (added in this branch) to restrict all access to
+   the `authenticated` role. This is now safe because the app authenticates.
 
 ### 3. The `scan-id` function is deployed with `--no-verify-jwt` — MEDIUM
 That makes the OCR endpoint public and unauthenticated: anyone can call it and burn your
