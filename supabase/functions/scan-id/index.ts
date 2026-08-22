@@ -14,6 +14,30 @@ interface ExtractedIdentity {
   rawText: string
 }
 
+// ISO 3166-1 alpha-3 → readable nationality for passport MRZ codes
+const COUNTRY_CODES: Record<string, string> = {
+  IND: 'Indian',     PAK: 'Pakistani',   PHL: 'Filipino',     BGD: 'Bangladeshi',
+  NPL: 'Nepali',     LKA: 'Sri Lankan',  EGY: 'Egyptian',     JOR: 'Jordanian',
+  GBR: 'British',    USA: 'American',    CAN: 'Canadian',     AUS: 'Australian',
+  FRA: 'French',     DEU: 'German',      CHN: 'Chinese',      KOR: 'Korean',
+  THA: 'Thai',       IDN: 'Indonesian',  MYS: 'Malaysian',    VNM: 'Vietnamese',
+  ARE: 'Emirati',    SAU: 'Saudi',       KWT: 'Kuwaiti',      BHR: 'Bahraini',
+  QAT: 'Qatari',     OMN: 'Omani',       TUR: 'Turkish',      IRN: 'Iranian',
+  ETH: 'Ethiopian',  KEN: 'Kenyan',      NGA: 'Nigerian',     GHA: 'Ghanaian',
+  MAR: 'Moroccan',   DZA: 'Algerian',    TUN: 'Tunisian',     LBN: 'Lebanese',
+  SYR: 'Syrian',     IRQ: 'Iraqi',       YEM: 'Yemeni',       SOM: 'Somali',
+  SDN: 'Sudanese',   TZA: 'Tanzanian',   UGA: 'Ugandan',      ZMB: 'Zambian',
+  ZWE: 'Zimbabwean', CMR: 'Cameroonian', CIV: 'Ivorian',      SEN: 'Senegalese',
+  JPN: 'Japanese',   KHM: 'Cambodian',   MMR: 'Burmese',      AFG: 'Afghan',
+  UZB: 'Uzbek',      KAZ: 'Kazakh',      AZE: 'Azerbaijani',  ARM: 'Armenian',
+  GEO: 'Georgian',   MDV: 'Maldivian',   RUS: 'Russian',      UKR: 'Ukrainian',
+  POL: 'Polish',     ITA: 'Italian',     ESP: 'Spanish',      PRT: 'Portuguese',
+  NLD: 'Dutch',      BEL: 'Belgian',     CHE: 'Swiss',        AUT: 'Austrian',
+  SWE: 'Swedish',    NOR: 'Norwegian',   DNK: 'Danish',       FIN: 'Finnish',
+  GRC: 'Greek',      MEX: 'Mexican',     BRA: 'Brazilian',    COL: 'Colombian',
+  ARG: 'Argentine',  CHL: 'Chilean',     PER: 'Peruvian',
+}
+
 Deno.serve(async (req: Request) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -143,11 +167,14 @@ Deno.serve(async (req: Request) => {
         extracted.docNumber = line2[1].replace(/</g, '')
         if (!extracted.nationality) extracted.nationality = line2[2]
         const yy = parseInt(line2[5].substring(0, 2), 10)
-        // MRZ years are two digits; treat 00-49 as 2000s, 50-99 as 1900s.
         const yr = yy <= 49 ? 2000 + yy : 1900 + yy
         const mo = line2[5].substring(2, 4)
         const da = line2[5].substring(4, 6)
         extracted.expiryDate = `${yr}-${mo}-${da}`
+      }
+      // Expand 3-letter ISO code to readable nationality
+      if (extracted.nationality && COUNTRY_CODES[extracted.nationality.toUpperCase()]) {
+        extracted.nationality = COUNTRY_CODES[extracted.nationality.toUpperCase()]
       }
     }
 
@@ -196,38 +223,60 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── 7. Nationality extraction for Emirates ID ──
-    // OCR.space may produce any of these variants:
-    //   a) "Nationality: India"  (label + colon + value on same line)
-    //   b) "Nationality India"   (label + value, no colon)
-    //   c) "Nationality:"        (label only) → value is on the NEXT line
-    // We try all three in order.
+    // Strategy A: broad inline regex (handles OCR misspellings like "Nationaiity", "Nationailty")
+    if (extracted.docType === 'emirates_id' && !extracted.nationality) {
+      const inlineMatch = rawText.match(/nation[a-z]{0,6}\s*[:/]?\s*([a-z][a-z ]{1,20})/i)
+      if (inlineMatch && inlineMatch[1]) {
+        const candidate = inlineMatch[1].trim().split(/\s+/)[0] // take first word
+        if (candidate.length > 1 && !/date|birth|expiry|issue|gender|sex|sign|united|arab/i.test(candidate)) {
+          extracted.nationality = candidate
+        }
+      }
+    }
+
+    // Strategy B: line-by-line — find label, read same line or next line
     if (extracted.docType === 'emirates_id' && !extracted.nationality) {
       const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-
-      // Find any line that contains the word "Nationality"
-      const natIdx = lines.findIndex((l) => /nationality/i.test(l))
-
+      const natIdx = lines.findIndex((l) => /nation/i.test(l))
       if (natIdx !== -1) {
-        const natLine = lines[natIdx]
-
-        // Strip the keyword + any colon/slash punctuation to get the value portion
-        const afterKeyword = natLine
-          .replace(/.*nationality\s*[:/]?\s*/i, '')
+        const afterKeyword = lines[natIdx]
+          .replace(/.*nation\w*\s*[:/]?\s*/i, '')
           .replace(/[^a-zA-Z\s]/g, '')
           .trim()
-
-        if (afterKeyword.length > 1) {
-          // Variant a/b: value is on the same line
-          extracted.nationality = afterKeyword
+        if (afterKeyword.length > 1 && !/date|birth|expiry|issue|sex|sign|united|arab/i.test(afterKeyword)) {
+          extracted.nationality = afterKeyword.split(/\s+/)[0]
         } else if (natIdx + 1 < lines.length) {
-          // Variant c: value is on the next line — guard against picking up a date or label
           const nextLine = lines[natIdx + 1].replace(/[^a-zA-Z\s]/g, '').trim()
-          const looksLikeLabel = /date|birth|expiry|issuing|sex|gender|sign/i.test(nextLine)
+          const looksLikeLabel = /date|birth|expiry|issuing|sex|gender|sign|united|arab/i.test(nextLine)
           if (nextLine.length > 1 && !looksLikeLabel) {
-            extracted.nationality = nextLine
+            extracted.nationality = nextLine.split(/\s+/)[0]
           }
         }
       }
+    }
+
+    // Strategy C: Emirates ID back — TD1 MRZ format
+    // Line 2 pattern: YYMMDD(C)(Sex)YYMMDD(C)(NAT3)(optional)
+    if (extracted.docType === 'emirates_id' && !extracted.nationality) {
+      const td1L2 = mrzText.match(/\d{6}\d[MFX<]\d{6}\d([A-Z<]{3})/)
+      if (td1L2) {
+        const nat = td1L2[1].replace(/</g, '').trim()
+        if (nat.length >= 2) extracted.nationality = COUNTRY_CODES[nat] || nat
+        // Also grab expiry from TD1 if not yet set
+        const td1Exp = mrzText.match(/\d{6}\d[MFX<](\d{6})\d/)
+        if (td1Exp && !extracted.expiryDate) {
+          const raw = td1Exp[1]
+          const yy2 = parseInt(raw.substring(0, 2), 10)
+          const yr2 = yy2 <= 49 ? 2000 + yy2 : 1900 + yy2
+          extracted.expiryDate = `${yr2}-${raw.substring(2, 4)}-${raw.substring(4, 6)}`
+        }
+      }
+    }
+
+    // Final step: expand any remaining 3-letter ISO code (e.g. IND → Indian)
+    if (extracted.nationality) {
+      const code = extracted.nationality.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3)
+      if (COUNTRY_CODES[code]) extracted.nationality = COUNTRY_CODES[code]
     }
 
 

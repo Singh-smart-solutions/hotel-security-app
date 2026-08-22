@@ -306,7 +306,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [endingShift,  setEndingShift]  = useState(false);
 
   /* ── NFC state ── */
-  const [nfcActive, setNfcActive] = useState(false);
+  const [nfcActive,       setNfcActive]       = useState(false);
+  const [nfcCheckoutMode, setNfcCheckoutMode] = useState(false);
 
   /* ── Refs ── */
   const videoRef           = useRef(null);
@@ -532,10 +533,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     }
   }, [applyExtractedFields, beep, closeDocumentScanner, notify]);
 
-  /* ── NFC ── */
+  /* ── NFC check-in (pass picker) ── */
   const startNfcScan = useCallback(async () => {
     if (!('NDEFReader' in window)) {
-      notify('NFC not supported on this device. Use Android Chrome.', 'info'); return;
+      notify('NFC not available. Use Android Chrome.', 'info'); return;
     }
     try {
       const ndef = new window.NDEFReader();
@@ -545,7 +546,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       ndef.onreading = async ({ serialNumber }) => {
         const uid = serialNumber.replace(/:/g, '').toUpperCase();
         const { data: pass } = await supabase.from('passes').select('*').eq('nfc_uid', uid).maybeSingle();
-        if (!pass) { notify(`NFC tag not registered (${uid}). Link it in Manager Portal → Passes.`, 'info'); return; }
+        if (!pass) { notify(`NFC tag not registered (${uid}). Link in Manager → Passes.`, 'info'); return; }
         if (pass.status === 'available') {
           setSelectedPass(pass.pass_number);
           const tt = TRAFFIC_TYPES.find((t) => t.passType === pass.pass_type);
@@ -556,13 +557,59 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
         } else if (pass.status === 'in_use') {
           const al = insideLogs.find((l) => l.pass_badge_no === pass.pass_number);
           if (al) { await handleCheckOut(al.id, pass.pass_number); setNfcActive(false); }
-          else { notify(`Pass ${pass.pass_number} is in use but log not found. Check manually.`, 'info'); }
+          else { notify(`Pass ${pass.pass_number} in use but not in this shift. Check manually.`, 'info'); }
         }
       };
     } catch (e) {
       setNfcActive(false); notify('NFC error: ' + e.message, 'error');
     }
   }, [insideLogs, notify]);
+
+  /* ── NFC checkout mode (active passes card) ── */
+  const startNfcCheckout = useCallback(async () => {
+    if (!('NDEFReader' in window)) {
+      notify('NFC not available on this device. Use Android Chrome.', 'info'); return;
+    }
+    try {
+      const ndef = new window.NDEFReader();
+      await ndef.scan();
+      setNfcCheckoutMode(true);
+      notify('NFC Checkout active — tap returning visitor\'s badge on phone', 'success');
+      if ('vibrate' in navigator) navigator.vibrate(40);
+
+      ndef.onreading = async ({ serialNumber }) => {
+        const uid = serialNumber.replace(/:/g, '').toUpperCase();
+        const { data: pass } = await supabase.from('passes').select('*').eq('nfc_uid', uid).maybeSingle();
+        if (!pass) {
+          notify(`NFC tag not registered (${uid}). Link in Manager → Passes.`, 'info');
+          if ('vibrate' in navigator) navigator.vibrate([80, 60, 80]);
+          return;
+        }
+        if (pass.status === 'in_use') {
+          // Find matching active log
+          const { data: logs } = await supabase.from('hotel_security_logs')
+            .select('id,full_name,pass_badge_no')
+            .eq('pass_badge_no', pass.pass_number)
+            .eq('status', 'inside')
+            .maybeSingle();
+          if (logs) {
+            await handleCheckOut(logs.id, pass.pass_number);
+            notify(`✅ ${logs.full_name} auto checked out — Pass ${pass.pass_number} returned`, 'success');
+            if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
+          } else {
+            notify(`Pass ${pass.pass_number} in use but not in this shift. Check manually.`, 'info');
+          }
+        } else if (pass.status === 'available') {
+          notify(`Pass ${pass.pass_number} is already available — not checked in.`, 'info');
+          if ('vibrate' in navigator) navigator.vibrate([80, 60, 80]);
+        }
+      };
+
+      ndef.onerror = () => { setNfcCheckoutMode(false); notify('NFC error. Try again.', 'error'); };
+    } catch (e) {
+      setNfcCheckoutMode(false); notify('NFC error: ' + e.message, 'error');
+    }
+  }, [notify, handleCheckOut]);
 
   /* ── Check-in ── */
   const handleCheckIn = async (e) => {
@@ -865,10 +912,41 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
         {/* ── Active passes ── */}
         <div className={`${CARD} space-y-3 p-5`}>
-          <h2 className="flex items-center justify-between text-base font-bold">
-            <span>Active On Property ({insideLogs.length})</span>
-            <span className="text-xs font-normal text-slate-400">Tap Check-Out when pass returned</span>
-          </h2>
+          {/* Header row */}
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-base font-bold">Active On Property ({insideLogs.length})</h2>
+            <button
+              type="button"
+              onClick={nfcCheckoutMode ? () => setNfcCheckoutMode(false) : startNfcCheckout}
+              className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all ${
+                nfcCheckoutMode
+                  ? 'border-emerald-500/60 bg-emerald-600/20 text-emerald-300 animate-pulse shadow-lg shadow-emerald-900/30'
+                  : 'border-violet-500/30 bg-violet-600/10 text-violet-300 hover:bg-violet-600/20'
+              }`}
+            >
+              <Wifi className="h-3.5 w-3.5" />
+              {nfcCheckoutMode ? 'NFC Active — Tap badge' : 'NFC Checkout'}
+            </button>
+          </div>
+
+          {/* NFC checkout banner */}
+          {nfcCheckoutMode && (
+            <div className="flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-950/60 px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                </span>
+                <span className="text-sm font-semibold text-emerald-300">
+                  Hold returning visitor's badge to back of phone
+                </span>
+              </div>
+              <button onClick={() => setNfcCheckoutMode(false)} className="ml-2 text-emerald-400 hover:text-white transition">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           {insideLogs.length === 0 ? (
             <p className="py-4 text-center text-sm text-slate-500">No one inside at this gate</p>
           ) : (
@@ -876,17 +954,24 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
               {insideLogs.map((l) => {
                 const over = (Date.now() - new Date(l.check_in_time).getTime()) / 3600000 > (l.allowed_hours || 2);
                 return (
-                  <div key={l.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${over ? 'border-red-500/40 bg-red-950/30' : 'border-white/5 bg-white/5'}`}>
+                  <div key={l.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${
+                    over ? 'border-red-500/40 bg-red-950/30' : 'border-white/5 bg-white/5'
+                  }`}>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs font-bold text-indigo-300">{l.pass_badge_no}</span>
                         {over && <span className="rounded-full border border-red-500/40 bg-red-600/20 px-1.5 py-0.5 text-[9px] font-bold text-red-300">OVERSTAY</span>}
                       </div>
                       <p className="truncate text-sm font-medium text-white">{l.full_name}</p>
-                      <p className="text-[10px] text-slate-400">{l.company_name || l.traffic_type} • {fmtDuration(l.check_in_time)} inside</p>
+                      <p className="text-[10px] text-slate-400">
+                        {l.company_name || l.traffic_type} • {fmtDuration(l.check_in_time)} inside
+                      </p>
                     </div>
-                    <button onClick={() => handleCheckOut(l.id, l.pass_badge_no)}
-                      className="flex-shrink-0 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 transition">
+                    {/* Manual checkout always available as fallback */}
+                    <button
+                      onClick={() => handleCheckOut(l.id, l.pass_badge_no)}
+                      className="flex-shrink-0 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 transition"
+                    >
                       Check-Out
                     </button>
                   </div>
