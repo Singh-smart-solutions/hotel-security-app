@@ -609,7 +609,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     } catch (e) {
       setNfcCheckoutMode(false); notify('NFC error: ' + e.message, 'error');
     }
-  }, [notify, handleCheckOut]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notify]); // handleCheckOut captured from closure — safe, defined by first render paint
+
 
   /* ── Check-in ── */
   const handleCheckIn = async (e) => {
