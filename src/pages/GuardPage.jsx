@@ -58,6 +58,14 @@ const STANDARD_DEPARTMENTS = [
   'others',
 ];
 
+const CONTRACTOR_WORK_TYPES = [
+  'Electrical',
+  'Confined space',
+  'Work on height',
+  'Hot work',
+  'others',
+];
+
 const PASS_PREFIX = { supplier: 'S', contractor: 'C', visitor: 'V' };
 
 function fmtDuration(inTime) {
@@ -310,6 +318,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [deptSelection, setDeptSelection] = useState('');
   const [manualDept,    setManualDept]    = useState('');
   const [whomToVisit,   setWhomToVisit]   = useState('');
+  const [contractorWorkType, setContractorWorkType] = useState('');
+  const [manualWorkType,     setManualWorkType]     = useState('');
+  const [workPermitNumber,   setWorkPermitNumber]   = useState('');
+  const [areaOfWork,         setAreaOfWork]         = useState('');
   const [selectedPass,  setSelectedPass]  = useState('');
   const [allowedHours,  setAllowedHours]  = useState(0.75);
   const [isIdExpired,   setIsIdExpired]   = useState(false);
@@ -372,6 +384,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setHostDept('');
     setManualDept('');
     setWhomToVisit('');
+    setContractorWorkType('');
+    setManualWorkType('');
+    setWorkPermitNumber('');
+    setAreaOfWork('');
     if (t?.requiresPass) {
       fetchPasses(t.passType);
     }
@@ -412,6 +428,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setDocNumber(''); setFullName(''); setMobileNumber(''); setCompanyName('');
     setVehiclePlate(''); setNationality(''); setIdExpiryDate(''); setHostDept('');
     setDeptSelection(''); setManualDept(''); setWhomToVisit('');
+    setContractorWorkType(''); setManualWorkType(''); setWorkPermitNumber(''); setAreaOfWork('');
     setSelectedPass(''); setIsIdExpired(false); setStatusMsg('');
     const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
     if (t) setAllowedHours(t.hours);
@@ -677,9 +694,18 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     if (!vehiclePlate.trim()) return notify('Vehicle Plate or Walk-in is required', 'error');
     const baseDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
     if (!baseDept) return notify('Destination / Department is required', 'error');
+
     if (trafficType === 'hotel_guest_visitor' && !whomToVisit.trim()) {
       return notify('Please specify whom the visitor is going to visit', 'error');
     }
+
+    if (trafficType === 'contractor_engineer') {
+      const effectiveWork = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
+      if (!effectiveWork) return notify('Contractor kind of work is required', 'error');
+      if (!workPermitNumber.trim()) return notify('Work Permit Number (PTW #) is required', 'error');
+      if (!areaOfWork.trim()) return notify('Area of Work is required', 'error');
+    }
+
     if (requiresPass && !selectedPass) {
       return notify('Please select or tap a pass badge first', 'error');
     }
@@ -687,9 +713,19 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
     setSubmitting(true);
 
-    const effectiveDept = whomToVisit.trim()
-      ? `${baseDept} (Visiting: ${whomToVisit.trim()})`
-      : baseDept;
+    let effectiveDept = baseDept;
+    let purpose = 'Standard Entry';
+
+    if (trafficType === 'hotel_guest_visitor' && whomToVisit.trim()) {
+      effectiveDept = `${baseDept} (Visiting: ${whomToVisit.trim()})`;
+      purpose = `Visitor: Visiting ${whomToVisit.trim()}`;
+    } else if (trafficType === 'contractor_engineer') {
+      const effectiveWork = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
+      effectiveDept = `${baseDept} — Area: ${areaOfWork.trim()}`;
+      purpose = `Contractor: ${effectiveWork} (PTW: ${workPermitNumber.trim()})`;
+    } else if (trafficType === 'casual_staff_banquet') {
+      purpose = `Casual Shift (${allowedHours}h)`;
+    }
 
     const assignedBadge = requiresPass ? selectedPass : 'CASUAL';
 
@@ -704,7 +740,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       nationality:       nationality.trim(),
       id_expiry_date:    idExpiryDate || null,
       traffic_type:      trafficType,
-      purpose_of_visit:  trafficType === 'casual_staff_banquet' ? `Casual Shift (${allowedHours}h)` : 'Standard Entry',
+      purpose_of_visit:  purpose,
       host_room_or_dept: effectiveDept,
       pass_badge_no:     assignedBadge,
       allowed_hours:     Number(allowedHours) || 2,
@@ -983,11 +1019,75 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                   <input
                     value={whomToVisit}
                     onChange={(e) => setWhomToVisit(e.target.value)}
-                    placeholder="e.g. John Smith / Finance Manager / Room 402"
+                    placeholder="e.g. John Smith / Finance Manager / General Manager"
                     className={INPUT}
                     required
                   />
                 </div>
+              )}
+
+              {/* ── Contractor specific fields ── */}
+              {trafficType === 'contractor_engineer' && (
+                <>
+                  <div>
+                    <label className={LABEL}>
+                      Kind of Work <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      value={contractorWorkType}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setContractorWorkType(val);
+                        if (val !== 'others') setManualWorkType('');
+                      }}
+                      className={`${INPUT} appearance-none cursor-pointer`}
+                      required
+                    >
+                      <option value="">— Select Kind of Work —</option>
+                      {CONTRACTOR_WORK_TYPES.map((w) => (
+                        <option key={w} value={w}>
+                          {w === 'others' ? 'Others (Type Manually)' : w}
+                        </option>
+                      ))}
+                    </select>
+                    {contractorWorkType === 'others' && (
+                      <input
+                        type="text"
+                        value={manualWorkType}
+                        onChange={(e) => setManualWorkType(e.target.value)}
+                        placeholder="Enter custom kind of work"
+                        className={`${INPUT} mt-2`}
+                        required
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <label className={LABEL}>
+                      Work Permit Number (PTW #) <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      value={workPermitNumber}
+                      onChange={(e) => setWorkPermitNumber(e.target.value)}
+                      placeholder="e.g. PTW-2026-089 / WP-458"
+                      className={INPUT}
+                      required
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className={LABEL}>
+                      Area of Work / Precise Location <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      value={areaOfWork}
+                      onChange={(e) => setAreaOfWork(e.target.value)}
+                      placeholder="e.g. Roof Chiller Plant / Substation 2 / Kitchen Exhaust Duct"
+                      className={INPUT}
+                      required
+                    />
+                  </div>
+                </>
               )}
 
               {/* ── Expected stay / work duration selector ── */}
@@ -1106,7 +1206,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
             {(() => {
               const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
               const isMissingVisitorHost = trafficType === 'hotel_guest_visitor' && !whomToVisit.trim();
-              const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept || isMissingVisitorHost;
+              const effectiveContractorWork = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
+              const isMissingContractorData = trafficType === 'contractor_engineer' && (!effectiveContractorWork || !workPermitNumber.trim() || !areaOfWork.trim());
+              const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept || isMissingVisitorHost || isMissingContractorData;
               const isMissingPass = requiresPass && !selectedPass;
               const isDisabled = submitting || isIdExpired || isMissingPass || isMissingData;
 
