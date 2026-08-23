@@ -358,6 +358,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [extendModalLog, setExtendModalLog] = useState(null);
   const [extraHours,     setExtraHours]     = useState(2);
   const [extendReason,   setExtendReason]   = useState('');
+  const [extendApprover, setExtendApprover] = useState('');
   const [extending,      setExtending]      = useState(false);
 
   /* ── NFC state ── */
@@ -707,7 +708,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const handleExtendStay = async (e) => {
     e.preventDefault();
     if (!extendModalLog) return;
-    if (!extendReason.trim()) return notify('Reason / Approver name is required to extend time', 'error');
+    if (!extendReason.trim()) return notify('Reason for extension is required', 'error');
+    if (!extendApprover.trim()) return notify('Approving manager / contact name is required', 'error');
     const addH = Number(extraHours) || 1;
     if (addH <= 0) return notify('Extension hours must be greater than 0', 'error');
 
@@ -715,7 +717,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     const currentAh = Number(extendModalLog.allowed_hours) || 2;
     const newAh = currentAh + addH;
     const existingPurpose = extendModalLog.purpose_of_visit || 'Standard Entry';
-    const note = `[Ext +${addH}h: ${extendReason.trim()} (Logged by ${guard.name})]`;
+    const note = `[Ext +${addH}h | Reason: ${extendReason.trim()} | Approved By: ${extendApprover.trim()} (Logged by ${guard.name})]`;
     const updatedPurpose = `${existingPurpose} ${note}`.trim();
 
     const { error } = await supabase.from('hotel_security_logs').update({
@@ -1411,6 +1413,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                           setExtendModalLog(l);
                           setExtraHours(2);
                           setExtendReason('');
+                          setExtendApprover('');
                         }}
                         className="rounded-lg bg-indigo-600/20 border border-indigo-500/30 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-600/30 transition flex items-center gap-1"
                         title="Extend allowed stay/shift time"
@@ -1528,12 +1531,25 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
               <div>
                 <label className={LABEL}>
-                  Reason / Approving Department Manager <span className="text-red-400">*</span>
+                  Reason for Extension <span className="text-red-400">*</span>
                 </label>
                 <input
                   value={extendReason}
                   onChange={(e) => setExtendReason(e.target.value)}
-                  placeholder="e.g. Approved by Chef Marco (F&B) for banquet overtime"
+                  placeholder="e.g. Banquet event running late / Chiller motor repair pending"
+                  className={INPUT}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className={LABEL}>
+                  Approved By (Department Manager / Contact) <span className="text-red-400">*</span>
+                </label>
+                <input
+                  value={extendApprover}
+                  onChange={(e) => setExtendApprover(e.target.value)}
+                  placeholder="e.g. Chef Marco (F&B Director) / Mr. John (Engineering Mgr)"
                   className={INPUT}
                   required
                 />
@@ -1549,7 +1565,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                 </button>
                 <button
                   type="submit"
-                  disabled={extending || !extendReason.trim()}
+                  disabled={extending || !extendReason.trim() || !extendApprover.trim()}
                   className={`${BTN_PRI} flex-1 py-2.5 text-sm`}
                 >
                   {extending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
