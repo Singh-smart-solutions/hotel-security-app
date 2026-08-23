@@ -312,6 +312,11 @@ function ShiftStart({ guard, onStart, onLogout, notify }) {
    GUARD TERMINAL  (main check-in screen)
 ══════════════════════════════════════════════════════════════ */
 function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
+  /* ── Guard Log Table Search & Filters ── */
+  const [logSearch,        setLogSearch]        = useState('');
+  const [logFilterType,    setLogFilterType]    = useState('all');
+  const [logFilterStatus,  setLogFilterStatus]  = useState('all');
+
   /* ── Form state ── */
   const [trafficType,   setTrafficType]   = useState('supplier_delivery');
   const [docNumber,     setDocNumber]     = useState('');
@@ -1475,21 +1480,163 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           )}
         </div>
 
-        {/* ── Recent check-outs ── */}
-        {logs.filter((l) => l.status === 'checked_out').length > 0 && (
-          <div className={`${CARD} p-5`}>
-            <h2 className="mb-3 text-base font-bold text-slate-300">Recent Check-Outs</h2>
-            <div className="space-y-1.5">
-              {logs.filter((l) => l.status === 'checked_out').slice(0, 5).map((l) => (
-                <div key={l.id} className="flex items-center gap-2 text-sm text-slate-400">
-                  <span className="font-mono text-xs text-slate-500">{l.pass_badge_no}</span>
-                  <span className="text-white">{l.full_name}</span>
-                  <span className="ml-auto text-xs">{new Date(l.check_out_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-              ))}
+        {/* ── Complete Gate Security Logs & Excel Report ── */}
+        <div className={`${CARD} p-5 space-y-4`}>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                📋 Gate Security Logs & Master Register
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Total {logs.length} logged entries recorded at this terminal
+              </p>
             </div>
+
+            <button
+              type="button"
+              onClick={() => generateProfessionalExcelReport(logs, notify)}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-3.5 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/40 hover:from-emerald-500 hover:to-teal-500 transition active:scale-95"
+            >
+              <Download className="h-4 w-4" />
+              Download Log Report (.xlsx)
+            </button>
           </div>
-        )}
+
+          {/* Filters & Search */}
+          <div className="flex flex-wrap gap-2">
+            <div className="relative flex-1 min-w-40">
+              <input
+                type="text"
+                placeholder="Search name, pass #, company, ID, vehicle…"
+                value={logSearch}
+                onChange={(e) => setLogSearch(e.target.value)}
+                className={`${INPUT} text-xs py-2`}
+              />
+              {logSearch && (
+                <button
+                  type="button"
+                  onClick={() => setLogSearch('')}
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            <select
+              value={logFilterType}
+              onChange={(e) => setLogFilterType(e.target.value)}
+              className={`${INPUT} w-auto text-xs py-2 appearance-none`}
+            >
+              <option value="all">All Traffic Types</option>
+              <option value="hotel_guest_visitor">Visitors</option>
+              <option value="contractor_engineer">Contractors</option>
+              <option value="supplier_delivery">Suppliers</option>
+              <option value="casual_staff_banquet">Casuals</option>
+            </select>
+
+            <select
+              value={logFilterStatus}
+              onChange={(e) => setLogFilterStatus(e.target.value)}
+              className={`${INPUT} w-auto text-xs py-2 appearance-none`}
+            >
+              <option value="all">All Statuses</option>
+              <option value="inside">Currently Inside</option>
+              <option value="checked_out">Checked Out</option>
+            </select>
+          </div>
+
+          {/* Logs Table */}
+          {(() => {
+            const filtered = logs.filter((l) => {
+              const matchesSearch = !logSearch || [l.full_name, l.pass_badge_no, l.company_name, l.doc_number, l.vehicle_plate, l.mobile_number]
+                .some((f) => f?.toLowerCase().includes(logSearch.toLowerCase()));
+              const matchesType = logFilterType === 'all' || l.traffic_type === logFilterType;
+              const matchesStatus = logFilterStatus === 'all' || l.status === logFilterStatus;
+              return matchesSearch && matchesType && matchesStatus;
+            });
+
+            if (filtered.length === 0) {
+              return (
+                <p className="py-6 text-center text-xs text-slate-500">
+                  {logs.length === 0 ? 'No security logs recorded yet.' : 'No logs match your search filter.'}
+                </p>
+              );
+            }
+
+            return (
+              <div className="overflow-x-auto -mx-2 rounded-xl border border-white/5 bg-slate-950/40">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="border-b border-white/10 bg-white/5 text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                    <tr>
+                      <th className="px-3 py-2">Pass #</th>
+                      <th className="px-3 py-2">Visitor / Person</th>
+                      <th className="px-3 py-2">Category</th>
+                      <th className="px-3 py-2">Company / Vehicle</th>
+                      <th className="px-3 py-2">Check-In</th>
+                      <th className="px-3 py-2">Check-Out</th>
+                      <th className="px-3 py-2">Duration</th>
+                      <th className="px-3 py-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filtered.map((l) => {
+                      const isInside = l.status === 'inside';
+                      const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');
+                      const formatT = (d) => d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+
+                      return (
+                        <tr key={l.id} className="hover:bg-white/5 transition">
+                          <td className="px-3 py-2 font-mono font-bold text-indigo-300">
+                            {l.pass_badge_no || 'CASUAL'}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="font-semibold text-white truncate max-w-36">{l.full_name}</div>
+                            <div className="text-[10px] text-slate-400 truncate max-w-36">{l.host_room_or_dept || '—'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-slate-300">
+                            {l.traffic_type === 'hotel_guest_visitor' ? 'Visitor' :
+                             l.traffic_type === 'contractor_engineer' ? 'Contractor' :
+                             l.traffic_type === 'supplier_delivery' ? 'Supplier' : 'Casual'}
+                          </td>
+                          <td className="px-3 py-2 text-slate-400">
+                            <div className="truncate max-w-32 text-slate-300">{l.company_name || '—'}</div>
+                            <div className="text-[10px] text-slate-500 font-mono">{l.vehicle_plate || 'Walk-in'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-slate-300 whitespace-nowrap">
+                            <div>{formatT(l.check_in_time)}</div>
+                            <div className="text-[9px] text-slate-500">{l.logged_by_guard || '—'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-slate-300 whitespace-nowrap">
+                            <div>{formatT(l.check_out_time)}</div>
+                            <div className="text-[9px] text-slate-500">{l.checkout_by_guard || '—'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-slate-400 font-mono text-[11px] whitespace-nowrap">
+                            {fmtDuration(l.check_in_time, l.check_out_time)}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex rounded-md border px-1.5 py-0.5 text-[9px] font-bold ${
+                              isInside
+                                ? 'bg-blue-600/20 text-blue-300 border-blue-500/40'
+                                : 'bg-slate-700/30 text-slate-400 border-slate-600/30'
+                            }`}>
+                              {isInside ? 'INSIDE' : 'OUT'}
+                            </span>
+                            {isExtended && (
+                              <span className="block mt-0.5 text-[8px] font-bold text-cyan-300">
+                                ⏱️ Extended
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
       </main>
 
       {/* ── Handover / End shift modal ── */}
