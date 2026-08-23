@@ -2,12 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
 import * as XLSX from 'xlsx';
+import { generateProfessionalExcelReport } from '../utils/excelExporter';
 import {
   BrowserMultiFormatReader, BarcodeFormat, DecodeHintType,
 } from '@zxing/library';
 import {
   Shield, Truck, Wrench, Users, UserCheck, LogOut, AlertTriangle,
-  Smartphone, Camera, X, Loader2, CheckCircle2, ScanLine,
+  Smartphone, Camera, X, Loader2, CheckCircle2, ScanLine, Download,
   ChevronDown, Wifi, Tag, Clock, UserX, RefreshCw,
 } from 'lucide-react';
 
