@@ -620,6 +620,7 @@ function LogTable({ notify }) {
           'Mobile Number': '',
           'Nationality': '',
           'Purpose / Work Description': '',
+          'Extension Details': '',
           'Visiting Department': '',
           'Visiting Person / Area': '',
           'Pass #': '',
@@ -645,6 +646,13 @@ function LogTable({ notify }) {
             visitingPerson = parts[1].trim();
           }
 
+          const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');
+          let extensionNote = 'Standard (No Extension)';
+          if (isExtended) {
+            const m = l.purpose_of_visit.match(/\[Ext([^\]]+)\]/);
+            extensionNote = m ? 'EXTENDED: ' + m[1].trim() : 'EXTENDED BY MANAGER';
+          }
+
           sheetRows.push({
             'S/L No': globalSl++,
             'Date': formatDateOnly(l.check_in_time),
@@ -655,6 +663,7 @@ function LogTable({ notify }) {
             'Mobile Number': l.mobile_number || '—',
             'Nationality': l.nationality || '—',
             'Purpose / Work Description': l.purpose_of_visit || 'Standard Entry',
+            'Extension Details': extensionNote,
             'Visiting Department': dept,
             'Visiting Person / Area': visitingPerson,
             'Pass #': l.pass_badge_no || 'N/A',
@@ -689,6 +698,7 @@ function LogTable({ notify }) {
       { wch: 16 }, // Mobile
       { wch: 14 }, // Nationality
       { wch: 32 }, // Purpose / Work Description
+      { wch: 38 }, // Extension Details
       { wch: 20 }, // Department
       { wch: 22 }, // Visiting Person / Area
       { wch: 12 }, // Pass #
@@ -723,6 +733,7 @@ function LogTable({ notify }) {
       ['Status Overview', 'Count'],
       ['Currently Inside', displayed.filter((l) => l.status === 'inside').length],
       ['Checked Out', displayed.filter((l) => l.status === 'checked_out').length],
+      ['Manager Extensions Granted', displayed.filter((l) => l.purpose_of_visit?.includes('[Ext')).length],
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summary);
     wsSummary['!cols'] = [{ wch: 35 }, { wch: 15 }];
@@ -779,19 +790,41 @@ function LogTable({ notify }) {
               </tr>
             </thead>
             <tbody>
-              {displayed.map((l) => (
-                <tr key={l.id} className="border-b border-white/5 hover:bg-white/5 transition">
+              {displayed.map((l) => {
+                const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');
+                let extBadgeNote = '';
+                if (isExtended) {
+                  const m = l.purpose_of_visit.match(/\[Ext([^\]]+)\]/);
+                  if (m) extBadgeNote = m[1].split('|')[0].trim();
+                }
+
+                return (
+                <tr key={l.id} className={`border-b transition ${
+                  isExtended
+                    ? 'border-cyan-500/20 bg-cyan-950/20 hover:bg-cyan-900/30'
+                    : 'border-white/5 hover:bg-white/5'
+                }`}>
                   <td className="px-3 py-2.5 font-mono text-xs font-bold text-violet-300">{l.pass_badge_no}</td>
-                  <td className="px-3 py-2.5 font-medium text-white max-w-36 truncate">{l.full_name}</td>
+                  <td className="px-3 py-2.5">
+                    <div className="font-medium text-white max-w-36 truncate">{l.full_name}</div>
+                    {isExtended && (
+                      <span className="inline-flex items-center gap-1 rounded bg-cyan-500/20 border border-cyan-500/40 px-1.5 py-0.2 text-[9px] font-bold text-cyan-300 mt-0.5">
+                        <Clock className="h-2.5 w-2.5 text-cyan-400" />
+                        {extBadgeNote || 'Extended'}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5 text-slate-400 text-xs">{TRAFFIC_LABELS[l.traffic_type]||l.traffic_type}</td>
                   <td className="px-3 py-2.5 text-slate-400 text-xs max-w-32 truncate">{l.company_name||'—'}</td>
                   <td className="px-3 py-2.5 text-xs text-slate-300 whitespace-nowrap">{fmtDate(l.check_in_time)}</td>
                   <td className="px-3 py-2.5 text-xs text-slate-300 whitespace-nowrap">{fmtDate(l.check_out_time)}</td>
                   <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDur(l.check_in_time,l.check_out_time)}</td>
                   <td className="px-3 py-2.5">
-                    <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[l.status]||'bg-slate-700/40 text-slate-400 border-slate-600/30'}`}>
-                      {l.status.replace('_',' ')}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[l.status]||'bg-slate-700/40 text-slate-400 border-slate-600/30'}`}>
+                        {l.status.replace('_',' ')}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-slate-400">{l.logged_by_guard}</td>
                   <td className="px-3 py-2.5 text-xs">
@@ -814,7 +847,7 @@ function LogTable({ notify }) {
                     )}
                   </td>
                 </tr>
-              ))}
+              ); })}
               {displayed.length === 0 && (
                 <tr><td colSpan={10} className="py-10 text-center text-sm text-slate-500">No records found</td></tr>
               )}
