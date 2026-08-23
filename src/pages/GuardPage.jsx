@@ -768,7 +768,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       purpose_of_visit:  purpose,
       host_room_or_dept: effectiveDept,
       pass_badge_no:     assignedBadge,
-      allowed_hours:     Number(allowedHours) || 2,
+      allowed_hours:     Number(allowedHours) > 0 ? Number(allowedHours) : 0.1,
       status:            'inside',
     }]);
 
@@ -1176,7 +1176,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                       : 'Allowed Stay Duration'}
                   </label>
                   <span className="text-xs font-bold text-white tabular-nums bg-indigo-600/30 border border-indigo-500/40 px-2 py-0.5 rounded-lg">
-                    {allowedHours} {allowedHours === 1 ? 'hour' : 'hours'}
+                    {Number(allowedHours) < 1
+                      ? `${Math.max(1, Math.round(Number(allowedHours) * 60))} min${Math.round(Number(allowedHours) * 60) === 1 ? '' : 's'} (${allowedHours} hrs)`
+                      : `${allowedHours} ${Number(allowedHours) === 1 ? 'hour' : 'hours'}`}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1198,12 +1200,13 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                     <span className="text-xs text-slate-400">Custom:</span>
                     <input
                       type="number"
-                      min="0.25"
-                      max="24"
-                      step="0.5"
+                      min="0.001"
+                      max="72"
+                      step="any"
+                      placeholder="0.1"
                       value={allowedHours}
-                      onChange={(e) => setAllowedHours(parseFloat(e.target.value) || 1)}
-                      className="w-16 bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      onChange={(e) => setAllowedHours(e.target.value)}
+                      className="w-20 bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                     <span className="text-xs text-slate-400">hrs</span>
                   </div>

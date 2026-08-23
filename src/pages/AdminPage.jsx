@@ -920,12 +920,13 @@ function LogTable({ notify }) {
                     <span className="text-xs text-slate-400">Custom:</span>
                     <input
                       type="number"
-                      min="0.5"
-                      max="24"
-                      step="0.5"
+                      min="0.001"
+                      max="72"
+                      step="any"
+                      placeholder="0.1"
                       value={extraHours}
-                      onChange={(e) => setExtraHours(parseFloat(e.target.value) || 1)}
-                      className="w-16 bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      onChange={(e) => setExtraHours(e.target.value)}
+                      className="w-20 bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                     <span className="text-xs text-slate-400">hrs</span>
                   </div>
