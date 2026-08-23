@@ -66,6 +66,12 @@ const CONTRACTOR_WORK_TYPES = [
   'others',
 ];
 
+const VISITOR_PURPOSES = [
+  'Meeting',
+  'Interview',
+  'others',
+];
+
 const PASS_PREFIX = { supplier: 'S', contractor: 'C', visitor: 'V' };
 
 function fmtDuration(inTime) {
@@ -317,7 +323,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [hostDept,      setHostDept]      = useState('');
   const [deptSelection, setDeptSelection] = useState('');
   const [manualDept,    setManualDept]    = useState('');
-  const [whomToVisit,   setWhomToVisit]   = useState('');
+  const [whomToVisit,          setWhomToVisit]          = useState('');
+  const [visitorPurpose,      setVisitorPurpose]      = useState('');
+  const [manualVisitorPurpose,setManualVisitorPurpose]= useState('');
   const [contractorWorkType, setContractorWorkType] = useState('');
   const [manualWorkType,     setManualWorkType]     = useState('');
   const [workPermitNumber,   setWorkPermitNumber]   = useState('');
@@ -385,6 +393,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setHostDept('');
     setManualDept('');
     setWhomToVisit('');
+    setVisitorPurpose('');
+    setManualVisitorPurpose('');
     setContractorWorkType('');
     setManualWorkType('');
     setWorkPermitNumber('');
@@ -430,6 +440,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setDocNumber(''); setFullName(''); setMobileNumber(''); setCompanyName('');
     setVehiclePlate(''); setNationality(''); setIdExpiryDate(''); setHostDept('');
     setDeptSelection(''); setManualDept(''); setWhomToVisit('');
+    setVisitorPurpose(''); setManualVisitorPurpose('');
     setContractorWorkType(''); setManualWorkType(''); setWorkPermitNumber(''); setAreaOfWork(''); setWorkDescription('');
     setSelectedPass(''); setIsIdExpired(false); setStatusMsg('');
     const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
@@ -697,8 +708,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     const baseDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
     if (!baseDept) return notify('Destination / Department is required', 'error');
 
-    if (trafficType === 'hotel_guest_visitor' && !whomToVisit.trim()) {
-      return notify('Please specify whom the visitor is going to visit', 'error');
+    if (trafficType === 'hotel_guest_visitor') {
+      const effectiveVisitorPurp = visitorPurpose === 'others' ? manualVisitorPurpose.trim() : visitorPurpose.trim();
+      if (!whomToVisit.trim()) return notify('Please specify whom the visitor is going to visit', 'error');
+      if (!effectiveVisitorPurp) return notify('Purpose of visit is required (Meeting, Interview, or custom)', 'error');
     }
 
     if (trafficType === 'contractor_engineer') {
@@ -719,9 +732,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     let effectiveDept = baseDept;
     let purpose = 'Standard Entry';
 
-    if (trafficType === 'hotel_guest_visitor' && whomToVisit.trim()) {
+    if (trafficType === 'hotel_guest_visitor') {
+      const effectiveVisitorPurp = visitorPurpose === 'others' ? manualVisitorPurpose.trim() : visitorPurpose.trim();
       effectiveDept = `${baseDept} (Visiting: ${whomToVisit.trim()})`;
-      purpose = `Visitor: Visiting ${whomToVisit.trim()}`;
+      purpose = `${effectiveVisitorPurp} (Visiting: ${whomToVisit.trim()})`;
     } else if (trafficType === 'contractor_engineer') {
       const effectiveWork = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
       effectiveDept = `${baseDept} — Area: ${areaOfWork.trim()}`;
@@ -1015,18 +1029,53 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
               </div>
 
               {trafficType === 'hotel_guest_visitor' && (
-                <div className="sm:col-span-2">
-                  <label className={LABEL}>
-                    Whom to Visit (Host / Manager Name) <span className="text-red-400">*</span>
-                  </label>
-                  <input
-                    value={whomToVisit}
-                    onChange={(e) => setWhomToVisit(e.target.value)}
-                    placeholder="e.g. John Smith / Finance Manager / General Manager"
-                    className={INPUT}
-                    required
-                  />
-                </div>
+                <>
+                  <div className="sm:col-span-2">
+                    <label className={LABEL}>
+                      Whom to Visit (Host / Manager Name) <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      value={whomToVisit}
+                      onChange={(e) => setWhomToVisit(e.target.value)}
+                      placeholder="e.g. John Smith / Finance Manager / General Manager"
+                      className={INPUT}
+                      required
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className={LABEL}>
+                      Purpose of Visit <span className="text-red-400">*</span>
+                    </label>
+                    <select
+                      value={visitorPurpose}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setVisitorPurpose(val);
+                        if (val !== 'others') setManualVisitorPurpose('');
+                      }}
+                      className={`${INPUT} appearance-none cursor-pointer`}
+                      required
+                    >
+                      <option value="">— Select Purpose of Visit —</option>
+                      {VISITOR_PURPOSES.map((p) => (
+                        <option key={p} value={p}>
+                          {p === 'others' ? 'Others (Type Manually)' : p}
+                        </option>
+                      ))}
+                    </select>
+                    {visitorPurpose === 'others' && (
+                      <input
+                        type="text"
+                        value={manualVisitorPurpose}
+                        onChange={(e) => setManualVisitorPurpose(e.target.value)}
+                        placeholder="Enter custom purpose of visit"
+                        className={`${INPUT} mt-2`}
+                        required
+                      />
+                    )}
+                  </div>
+                </>
               )}
 
               {/* ── Contractor specific fields ── */}
@@ -1222,10 +1271,11 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
             {(() => {
               const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
-              const isMissingVisitorHost = trafficType === 'hotel_guest_visitor' && !whomToVisit.trim();
+              const effectiveVisitorPurp = visitorPurpose === 'others' ? manualVisitorPurpose.trim() : visitorPurpose.trim();
+              const isMissingVisitorData = trafficType === 'hotel_guest_visitor' && (!whomToVisit.trim() || !effectiveVisitorPurp);
               const effectiveContractorWork = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
               const isMissingContractorData = trafficType === 'contractor_engineer' && (!effectiveContractorWork || !workPermitNumber.trim() || !areaOfWork.trim() || !workDescription.trim());
-              const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept || isMissingVisitorHost || isMissingContractorData;
+              const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept || isMissingVisitorData || isMissingContractorData;
               const isMissingPass = requiresPass && !selectedPass;
               const isDisabled = submitting || isIdExpired || isMissingPass || isMissingData;
 
