@@ -380,7 +380,16 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   useEffect(() => {
     fetchLogs();
     const channel = supabase.channel('guard-terminal-logs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'hotel_security_logs' }, fetchLogs)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hotel_security_logs' }, (payload) => {
+        if (payload.eventType === 'UPDATE' && payload.new && payload.old) {
+          if ((payload.new.allowed_hours || 0) > (payload.old.allowed_hours || 0)) {
+            beep(true);
+            if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
+            notify(`⏱️ Manager Extended ${payload.new.full_name} (New Allowed: ${payload.new.allowed_hours}h)`, 'success');
+          }
+        }
+        fetchLogs();
+      })
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [shift]);
@@ -1352,26 +1361,74 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           ) : (
             <div className="space-y-2">
               {insideLogs.map((l) => {
-                const over = (Date.now() - new Date(l.check_in_time).getTime()) / 3600000 > (l.allowed_hours || 2);
+                const elapsedHours = (Date.now() - new Date(l.check_in_time).getTime()) / 3600000;
+                const allowedH = l.allowed_hours || 2;
+                const over = elapsedHours > allowedH;
+                const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');
+
+                let extNote = '';
+                if (isExtended) {
+                  const m = l.purpose_of_visit.match(/\[Ext([^\]]+)\]/);
+                  if (m) extNote = 'Ext' + m[1];
+                }
+
                 return (
-                  <div key={l.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${
-                    over ? 'border-red-500/40 bg-red-950/30' : 'border-white/5 bg-white/5'
+                  <div key={l.id} className={`flex items-start gap-3 rounded-xl border p-3 transition-all ${
+                    over
+                      ? 'border-red-500/60 bg-red-950/30 shadow-md shadow-red-950/40'
+                      : isExtended
+                      ? 'border-cyan-500/50 bg-cyan-950/20 shadow-md shadow-cyan-950/30'
+                      : 'border-white/5 bg-white/5'
                   }`}>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold text-indigo-300">{l.pass_badge_no}</span>
-                        {over && <span className="rounded-full border border-red-500/40 bg-red-600/20 px-1.5 py-0.5 text-[9px] font-bold text-red-300">OVERSTAY</span>}
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                        <span className="font-mono text-xs font-bold text-indigo-300 bg-indigo-950/50 border border-indigo-500/30 px-1.5 py-0.5 rounded">
+                          {l.pass_badge_no}
+                        </span>
+
+                        {over ? (
+                          <span className="rounded-md border border-red-500/50 bg-red-600/20 px-2 py-0.5 text-[9px] font-extrabold text-red-300 animate-pulse">
+                            ⚠️ OVERSTAY ({elapsedHours.toFixed(1)}h / {allowedH}h)
+                          </span>
+                        ) : isExtended ? (
+                          <span className="rounded-md border border-cyan-500/50 bg-cyan-600/20 px-2 py-0.5 text-[9px] font-bold text-cyan-300 flex items-center gap-1">
+                            <Clock className="h-2.5 w-2.5 text-cyan-400" />
+                            TIME EXTENDED ({allowedH}h Total)
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            Allowed: {allowedH}h
+                          </span>
+                        )}
                       </div>
-                      <p className="truncate text-sm font-medium text-white">{l.full_name}</p>
-                      <p className="text-[10px] text-slate-400">
-                        {l.company_name || l.traffic_type} • {fmtDuration(l.check_in_time)} inside
+
+                      <p className="truncate text-sm font-semibold text-white">{l.full_name}</p>
+
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        {l.company_name ? `${l.company_name} • ` : ''}
+                        <span className="text-slate-300 font-medium">{fmtDuration(l.check_in_time)}</span> inside
+                        {l.host_room_or_dept ? ` • 📍 ${l.host_room_or_dept}` : ''}
                       </p>
+
+                      {/* ── Manager extension note badge ── */}
+                      {isExtended && (
+                        <div className="mt-2 rounded-lg border border-cyan-500/40 bg-cyan-950/60 p-2 text-[11px] text-cyan-200">
+                          <p className="font-semibold text-cyan-300 flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-cyan-400" />
+                            Manager Approved Extension:
+                          </p>
+                          <p className="mt-0.5 text-cyan-100 text-[10px] leading-relaxed">
+                            {extNote.replace('Ext', 'Extended')}
+                          </p>
+                        </div>
+                      )}
                     </div>
-                    {/* Manual checkout always available as fallback */}
+
+                    {/* Check-out action */}
                     <button
                       type="button"
                       onClick={() => handleCheckOut(l.id, l.pass_badge_no)}
-                      className="flex-shrink-0 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 transition"
+                      className="flex-shrink-0 mt-0.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-600/30 transition shadow-sm"
                     >
                       Check-Out
                     </button>
