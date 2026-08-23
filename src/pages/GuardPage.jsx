@@ -3,6 +3,7 @@ import { supabase } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
 import * as XLSX from 'xlsx';
 import { generateProfessionalExcelReport } from '../utils/excelExporter';
+import { parseLogDetails } from '../utils/logFormatter';
 import {
   BrowserMultiFormatReader, BarcodeFormat, DecodeHintType,
 } from '@zxing/library';
@@ -1585,23 +1586,45 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                       const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');
                       const formatT = (d) => d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 
+                      const info = parseLogDetails(l);
+
                       return (
-                        <tr key={l.id} className="hover:bg-white/5 transition">
+                        <tr key={l.id} className={`transition ${
+                          info.isExtended ? 'bg-cyan-950/20 hover:bg-cyan-900/30' : 'hover:bg-white/5'
+                        }`}>
                           <td className="px-3 py-2 font-mono font-bold text-indigo-300">
                             {l.pass_badge_no || 'CASUAL'}
                           </td>
                           <td className="px-3 py-2">
-                            <div className="font-semibold text-white truncate max-w-36">{l.full_name}</div>
-                            <div className="text-[10px] text-slate-400 truncate max-w-36">{l.host_room_or_dept || '—'}</div>
+                            <div className="font-semibold text-white truncate max-w-40">{l.full_name}</div>
+                            {info.visitingPerson && (
+                              <div className="text-[10px] text-indigo-300 font-medium">👤 Host: {info.visitingPerson}</div>
+                            )}
+                            {info.workArea && (
+                              <div className="text-[10px] text-amber-300">📍 Area: {info.workArea}</div>
+                            )}
+                            {info.isExtended && (
+                              <div className="mt-1 text-[9px] text-cyan-200 bg-cyan-950/70 border border-cyan-500/30 rounded px-1 py-0.5">
+                                <span className="font-bold text-cyan-300">⏱️ Ext: </span>
+                                {info.extReason || 'Approved'} {info.extApprover ? `(${info.extApprover})` : ''}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-slate-300">
-                            {l.traffic_type === 'hotel_guest_visitor' ? 'Visitor' :
-                             l.traffic_type === 'contractor_engineer' ? 'Contractor' :
-                             l.traffic_type === 'supplier_delivery' ? 'Supplier' : 'Casual'}
+                            <div className="font-medium text-slate-200">
+                              {l.traffic_type === 'hotel_guest_visitor' ? 'Visitor' :
+                               l.traffic_type === 'contractor_engineer' ? 'Contractor' :
+                               l.traffic_type === 'supplier_delivery' ? 'Supplier' : 'Casual'}
+                            </div>
+                            {info.workKind ? (
+                              <div className="text-[10px] text-amber-300 font-medium">🔨 {info.workKind} {info.workPermit ? `(#${info.workPermit})` : ''}</div>
+                            ) : (
+                              <div className="text-[10px] text-slate-400">{info.cleanPurpose}</div>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-slate-400">
-                            <div className="truncate max-w-32 text-slate-300">{l.company_name || '—'}</div>
-                            <div className="text-[10px] text-slate-500 font-mono">{l.vehicle_plate || 'Walk-in'}</div>
+                            <div className="truncate max-w-32 text-slate-200 font-medium">{l.company_name || '—'}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{l.vehicle_plate || 'Walk-in'}</div>
                           </td>
                           <td className="px-3 py-2 text-slate-300 whitespace-nowrap">
                             <div>{formatT(l.check_in_time)}</div>
@@ -1622,9 +1645,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                             }`}>
                               {isInside ? 'INSIDE' : 'OUT'}
                             </span>
-                            {isExtended && (
+                            {info.isExtended && (
                               <span className="block mt-0.5 text-[8px] font-bold text-cyan-300">
-                                ⏱️ Extended
+                                ⏱️ {info.extHours ? `+${info.extHours}h` : 'Extended'}
                               </span>
                             )}
                           </td>

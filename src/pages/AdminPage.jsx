@@ -3,10 +3,11 @@ import { supabase } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
 import * as XLSX from 'xlsx';
 import { generateProfessionalExcelReport } from '../utils/excelExporter';
+import { parseLogDetails } from '../utils/logFormatter';
 import {
   Shield, Users, Tag, FileText, AlertTriangle, LogOut,
   Plus, Trash2, Eye, EyeOff, RefreshCw, Download, Wifi,
-  CheckCircle, XCircle, Clock, Loader2, ChevronDown, Search,
+  CheckCircle, CheckCircle2, XCircle, Clock, Loader2, ChevronDown, Search,
   BarChart2, Phone, Edit2, Save, X, Key, Smartphone,
 } from 'lucide-react';
 
@@ -641,42 +642,70 @@ function LogTable({ notify }) {
             </thead>
             <tbody>
               {displayed.map((l) => {
-                const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');
-                let extBadgeNote = '';
-                if (isExtended) {
-                  const m = l.purpose_of_visit.match(/\[Ext([^\]]+)\]/);
-                  if (m) extBadgeNote = m[1].split('|')[0].trim();
-                }
+                const info = parseLogDetails(l);
 
                 return (
                 <tr key={l.id} className={`border-b transition ${
-                  isExtended
-                    ? 'border-cyan-500/20 bg-cyan-950/20 hover:bg-cyan-900/30'
+                  info.isExtended
+                    ? 'border-cyan-500/30 bg-cyan-950/20 hover:bg-cyan-900/30'
                     : 'border-white/5 hover:bg-white/5'
                 }`}>
-                  <td className="px-3 py-2.5 font-mono text-xs font-bold text-violet-300">{l.pass_badge_no}</td>
+                  <td className="px-3 py-2.5 font-mono text-xs font-bold text-violet-300">
+                    {l.pass_badge_no || 'CASUAL'}
+                  </td>
                   <td className="px-3 py-2.5">
-                    <div className="font-medium text-white max-w-36 truncate">{l.full_name}</div>
-                    {isExtended && (
-                      <span className="inline-flex items-center gap-1 rounded bg-cyan-500/20 border border-cyan-500/40 px-1.5 py-0.2 text-[9px] font-bold text-cyan-300 mt-0.5">
-                        <Clock className="h-2.5 w-2.5 text-cyan-400" />
-                        {extBadgeNote || 'Extended'}
-                      </span>
+                    <div className="font-semibold text-white max-w-40 truncate">{l.full_name}</div>
+                    {l.nationality && <span className="text-[10px] text-slate-400">{l.nationality} • </span>}
+                    <span className="text-[10px] text-slate-400 font-mono">{l.doc_number || ''}</span>
+
+                    {/* Extension note under visitor */}
+                    {info.isExtended && (
+                      <div className="mt-1 flex items-start gap-1 rounded bg-cyan-950/60 border border-cyan-500/40 px-1.5 py-0.5 text-[9px] text-cyan-200">
+                        <Clock className="h-2.5 w-2.5 text-cyan-400 mt-0.5 flex-shrink-0" />
+                        <div>
+                          <span className="font-bold text-cyan-300">{info.extHours ? `+${info.extHours}h ` : ''}Ext: </span>
+                          <span>{info.extReason || 'Manager Approval'} </span>
+                          {info.extApprover && <span className="text-cyan-400">({info.extApprover})</span>}
+                        </div>
+                      </div>
                     )}
                   </td>
-                  <td className="px-3 py-2.5 text-slate-400 text-xs">{TRAFFIC_LABELS[l.traffic_type]||l.traffic_type}</td>
-                  <td className="px-3 py-2.5 text-slate-400 text-xs max-w-32 truncate">{l.company_name||'—'}</td>
-                  <td className="px-3 py-2.5 text-xs text-slate-300 whitespace-nowrap">{fmtDate(l.check_in_time)}</td>
-                  <td className="px-3 py-2.5 text-xs text-slate-300 whitespace-nowrap">{fmtDate(l.check_out_time)}</td>
-                  <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDur(l.check_in_time,l.check_out_time)}</td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex flex-col gap-1">
-                      <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[l.status]||'bg-slate-700/40 text-slate-400 border-slate-600/30'}`}>
-                        {l.status.replace('_',' ')}
-                      </span>
-                    </div>
+                  <td className="px-3 py-2.5 text-slate-300 text-xs">
+                    <div className="font-medium text-slate-200">{TRAFFIC_LABELS[l.traffic_type]||l.traffic_type}</div>
+                    {/* Contractor Kind / Visitor Purpose */}
+                    {info.workKind ? (
+                      <div className="text-[10px] text-amber-300 mt-0.5">🔨 {info.workKind} {info.workPermit ? `(PTW: ${info.workPermit})` : ''}</div>
+                    ) : (
+                      <div className="text-[10px] text-slate-400 mt-0.5">{info.cleanPurpose}</div>
+                    )}
                   </td>
-                  <td className="px-3 py-2.5 text-xs text-slate-400">{l.logged_by_guard}</td>
+                  <td className="px-3 py-2.5 text-slate-400 text-xs max-w-36">
+                    <div className="text-white font-medium truncate">{l.company_name || '—'}</div>
+                    <div className="text-[10px] text-slate-500 font-mono">{l.vehicle_plate || 'Walk-in'}</div>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-slate-300">
+                    <div className="font-medium text-white">{info.department}</div>
+                    {info.visitingPerson && (
+                      <div className="text-[10px] text-indigo-300 font-medium">👤 Host: {info.visitingPerson}</div>
+                    )}
+                    {info.workArea && (
+                      <div className="text-[10px] text-amber-300">📍 Area: {info.workArea}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-slate-300 whitespace-nowrap">
+                    <div>{fmtDate(l.check_in_time)}</div>
+                    <div className="text-[9px] text-slate-500">{l.logged_by_guard || '—'}</div>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-slate-300 whitespace-nowrap">
+                    <div>{fmtDate(l.check_out_time)}</div>
+                    <div className="text-[9px] text-slate-500">{l.checkout_by_guard || '—'}</div>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-slate-400 font-mono">{fmtDur(l.check_in_time,l.check_out_time)}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[l.status]||'bg-slate-700/40 text-slate-400 border-slate-600/30'}`}>
+                      {l.status.replace('_',' ')}
+                    </span>
+                  </td>
                   <td className="px-3 py-2.5 text-xs">
                     {l.status === 'inside' ? (
                       <button
@@ -748,7 +777,7 @@ function LogTable({ notify }) {
                 <div className="flex items-center justify-between mb-2">
                   <label className={LABEL}>Additional Hours to Add</label>
                   <span className="text-xs font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-lg">
-                    New Total: {(Number(extendModalLog.allowed_hours) || 2) + Number(extraHours)} hrs
+                    New Total: {(Number(extendModalLog.allowed_hours) || 2) + (Number(extraHours) || 0)} hrs
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
