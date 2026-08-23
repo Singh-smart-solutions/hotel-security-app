@@ -27,7 +27,7 @@ const TABS = [
 const TRAFFIC_LABELS = {
   supplier_delivery:    'Supplier',
   contractor_engineer:  'Contractor',
-  casual_staff_banquet: 'Banquet',
+  casual_staff_banquet: 'Casual',
   hotel_guest_visitor:  'Visitor',
 };
 
@@ -606,7 +606,7 @@ function LogTable({ notify }) {
           <option value="all">All Types</option>
           <option value="supplier_delivery">Supplier</option>
           <option value="contractor_engineer">Contractor</option>
-          <option value="casual_staff_banquet">Banquet</option>
+          <option value="casual_staff_banquet">Casual</option>
           <option value="hotel_guest_visitor">Visitor</option>
         </select>
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={`${INPUT} w-36`} />

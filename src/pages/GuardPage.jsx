@@ -22,7 +22,7 @@ const BTN_SEC = 'inline-flex items-center justify-center gap-2 rounded-xl border
 const TRAFFIC_TYPES = [
   { id: 'supplier_delivery',   label: 'Supplier / Truck',  icon: Truck,      hours: 0.75, passType: 'supplier'    },
   { id: 'contractor_engineer', label: 'Contractor',        icon: Wrench,     hours: 4.0,  passType: 'contractor'  },
-  { id: 'casual_staff_banquet',label: 'Banquet Casual',    icon: Users,      hours: 9.0,  passType: 'visitor'     },
+  { id: 'casual_staff_banquet',label: 'Casual',            icon: Users,      hours: 9.0,  passType: 'visitor'     },
   { id: 'hotel_guest_visitor', label: 'Guest Visitor',     icon: UserCheck,  hours: 2.0,  passType: 'visitor'     },
 ];
 
@@ -31,6 +31,29 @@ const GATE_OPTIONS = [
   'Main Lobby Concierge',
   'Staff Time Office',
   'Contractor West Gate',
+];
+
+/* ── Department presets ── */
+const CASUAL_DEPARTMENTS = [
+  'Hk casual',
+  'F&b casual',
+  'engineering casual',
+  'stewarding casual',
+  'entertainment casual',
+  'others',
+];
+
+const STANDARD_DEPARTMENTS = [
+  'Main Kitchen',
+  'Receiving / Loading Bay',
+  'Engineering / Maintenance',
+  'Housekeeping',
+  'Front Office / Concierge',
+  'Food & Beverage',
+  'Security',
+  'Staff Canteen',
+  'Guest Room',
+  'others',
 ];
 
 const PASS_PREFIX = { supplier: 'S', contractor: 'C', visitor: 'V' };
@@ -282,6 +305,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [nationality,   setNationality]   = useState('');
   const [idExpiryDate,  setIdExpiryDate]  = useState('');
   const [hostDept,      setHostDept]      = useState('');
+  const [deptSelection, setDeptSelection] = useState('');
+  const [manualDept,    setManualDept]    = useState('');
   const [selectedPass,  setSelectedPass]  = useState('');
   const [allowedHours,  setAllowedHours]  = useState(0.75);
   const [isIdExpired,   setIsIdExpired]   = useState(false);
@@ -338,6 +363,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
     if (t) setAllowedHours(t.hours);
     setSelectedPass('');
+    setDeptSelection('');
+    setHostDept('');
+    setManualDept('');
     fetchPasses(t?.passType || 'visitor');
   }, [trafficType]);
 
@@ -375,6 +403,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const resetForm = () => {
     setDocNumber(''); setFullName(''); setMobileNumber(''); setCompanyName('');
     setVehiclePlate(''); setNationality(''); setIdExpiryDate(''); setHostDept('');
+    setDeptSelection(''); setManualDept('');
     setSelectedPass(''); setIsIdExpired(false); setStatusMsg('');
     fetchPasses(currentPassType);
   };
@@ -613,27 +642,34 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   }, [notify]); // handleCheckOut captured from closure — safe, defined by first render paint
 
 
-  /* ── Check-in ── */
+  /* ── Check-in with strict completeness validation ── */
   const handleCheckIn = async (e) => {
     e.preventDefault();
-    if (!selectedPass) return notify('Select a pass number first', 'error');
-    if (!fullName || !docNumber) return notify('Full name and document number required', 'error');
+    if (!fullName.trim()) return notify('Full Name is required', 'error');
+    if (!docNumber.trim()) return notify('Document / Emirates ID number is required', 'error');
+    if (!companyName.trim()) return notify('Company / Organization is required', 'error');
+    if (!mobileNumber.trim()) return notify('Mobile Number is required', 'error');
+    if (!vehiclePlate.trim()) return notify('Vehicle Plate or Walk-in is required', 'error');
+    const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
+    if (!effectiveDept) return notify('Destination / Department is required', 'error');
+    if (!selectedPass) return notify('Please select or tap a pass number first', 'error');
     if (isIdExpired) return notify('⛔ ACCESS DENIED — Document is expired', 'error');
+
     setSubmitting(true);
 
     const { error: logErr } = await supabase.from('hotel_security_logs').insert([{
       shift_id:          shift.id,
       logged_by_guard:   guard.name,
-      full_name:         fullName,
-      doc_number:        docNumber,
-      mobile_number:     mobileNumber,
-      company_name:      companyName,
-      vehicle_plate:     vehiclePlate,
-      nationality,
+      full_name:         fullName.trim(),
+      doc_number:        docNumber.trim(),
+      mobile_number:     mobileNumber.trim(),
+      company_name:      companyName.trim(),
+      vehicle_plate:     vehiclePlate.trim(),
+      nationality:       nationality.trim(),
       id_expiry_date:    idExpiryDate || null,
       traffic_type:      trafficType,
       purpose_of_visit:  'Standard Entry',
-      host_room_or_dept: hostDept || 'General',
+      host_room_or_dept: effectiveDept,
       pass_badge_no:     selectedPass,
       allowed_hours:     allowedHours,
       status:            'inside',
@@ -809,25 +845,54 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           <form onSubmit={handleCheckIn} className="space-y-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className={LABEL}>Doc # / Mobile (Auto-Match)</label>
+                <label className={LABEL}>
+                  Doc # / ID Number <span className="text-red-400">*</span>
+                </label>
                 <input value={docNumber} onChange={(e) => { setDocNumber(e.target.value); handleDocSearch(e.target.value); }}
-                  placeholder="784-1985-..." className={INPUT} />
+                  placeholder="784-1985-..." className={INPUT} required />
               </div>
               <div>
-                <label className={LABEL}>Full Name</label>
-                <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Visitor name" className={INPUT} />
+                <label className={LABEL}>
+                  Full Name <span className="text-red-400">*</span>
+                </label>
+                <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Visitor name" className={INPUT} required />
               </div>
               <div>
-                <label className={LABEL}>Company / Supplier</label>
-                <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Company name" className={INPUT} />
+                <label className={LABEL}>
+                  Company / Agency <span className="text-red-400">*</span>
+                </label>
+                <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="e.g. Al Naboodah / Supplier" className={INPUT} required />
               </div>
               <div>
-                <label className={LABEL}>Mobile Number</label>
-                <input value={mobileNumber} onChange={(e) => setMobileNumber(e.target.value)} placeholder="05x xxx xxxx" className={INPUT} />
+                <label className={LABEL}>
+                  Mobile Number <span className="text-red-400">*</span>
+                </label>
+                <input value={mobileNumber} onChange={(e) => setMobileNumber(e.target.value)} placeholder="05x xxx xxxx" className={INPUT} required />
               </div>
               <div>
-                <label className={LABEL}>Vehicle Plate (Optional)</label>
-                <input value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} placeholder="DXB A 45892" className={INPUT} />
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    Vehicle Plate <span className="text-red-400">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setVehiclePlate(vehiclePlate === 'Walk-in' ? '' : 'Walk-in')}
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition ${
+                      vehiclePlate === 'Walk-in'
+                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                        : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                    }`}
+                  >
+                    {vehiclePlate === 'Walk-in' ? '✓ Walk-in Active' : '🚶 Walk-in'}
+                  </button>
+                </div>
+                <input
+                  value={vehiclePlate}
+                  onChange={(e) => setVehiclePlate(e.target.value)}
+                  placeholder={vehiclePlate === 'Walk-in' ? 'Walk-in' : 'DXB A 45892 (or click Walk-in)'}
+                  className={`${INPUT} ${vehiclePlate === 'Walk-in' ? '!border-emerald-500/50 !text-emerald-300 font-semibold' : ''}`}
+                  required
+                />
               </div>
               <div>
                 <label className={LABEL}>Nationality</label>
@@ -845,8 +910,44 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                 )}
               </div>
               <div>
-                <label className={LABEL}>Destination / Dept</label>
-                <input value={hostDept} onChange={(e) => setHostDept(e.target.value)} placeholder="e.g. Main Kitchen" className={INPUT} />
+                <label className={LABEL}>
+                  Destination / Dept <span className="text-red-400">*</span>
+                </label>
+                <select
+                  value={deptSelection}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setDeptSelection(val);
+                    if (val !== 'others') {
+                      setHostDept(val);
+                      setManualDept('');
+                    } else {
+                      setHostDept(manualDept);
+                    }
+                  }}
+                  className={`${INPUT} appearance-none cursor-pointer`}
+                  required
+                >
+                  <option value="">— Select Department —</option>
+                  {(trafficType === 'casual_staff_banquet' ? CASUAL_DEPARTMENTS : STANDARD_DEPARTMENTS).map((d) => (
+                    <option key={d} value={d}>
+                      {d === 'others' ? 'Others (Type Manually)' : d}
+                    </option>
+                  ))}
+                </select>
+                {deptSelection === 'others' && (
+                  <input
+                    type="text"
+                    value={manualDept}
+                    onChange={(e) => {
+                      setManualDept(e.target.value);
+                      setHostDept(e.target.value);
+                    }}
+                    placeholder="Enter manual department / destination"
+                    className={`${INPUT} mt-2`}
+                    required
+                  />
+                )}
               </div>
             </div>
 
@@ -904,11 +1005,38 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
             {statusMsg && <div className="font-mono text-xs text-indigo-400">{statusMsg}</div>}
 
-            <button type="submit" disabled={submitting || isIdExpired || !selectedPass}
-              className={`${BTN_PRI} w-full py-3 text-sm ${isIdExpired ? '!from-red-900 !to-red-900 !opacity-40 cursor-not-allowed' : ''}`}>
-              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4" />}
-              {isIdExpired ? 'Check-In Blocked — Expired Document' : 'Confirm Check-In & Issue Pass'}
-            </button>
+            {(() => {
+              const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
+              const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept;
+              const isDisabled = submitting || isIdExpired || !selectedPass || isMissingData;
+
+              return (
+                <button
+                  type="submit"
+                  disabled={isDisabled}
+                  className={`${BTN_PRI} w-full py-3 text-sm ${
+                    isIdExpired
+                      ? '!from-red-900 !to-red-900 !opacity-40 cursor-not-allowed'
+                      : isMissingData && selectedPass
+                      ? '!from-slate-700 !to-slate-800 !opacity-60 cursor-not-allowed'
+                      : ''
+                  }`}
+                >
+                  {submitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <UserCheck className="h-4 w-4" />
+                  )}
+                  {isIdExpired
+                    ? 'Check-In Blocked — Expired Document'
+                    : isMissingData
+                    ? 'Fill All Required Fields (*)'
+                    : !selectedPass
+                    ? 'Select or Tap Pass Badge'
+                    : `Confirm Check-In & Issue Pass (${selectedPass})`}
+                </button>
+              );
+            })()}
           </form>
         </div>
 
