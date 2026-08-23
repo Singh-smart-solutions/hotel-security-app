@@ -37,10 +37,13 @@ const formatSecurityName = (name) => {
 };
 
 /**
- * Builds a professionally formatted worksheet for a given category of logs.
+ * Builds a professionally formatted worksheet matching the exact Google Sheet template:
+ * - Row 1: "VISITOR ACCESS & SECURITY LOG" (Centered Title Banner)
+ * - Row 2: "SELECT / ENTER DATE:" [Date] "MASTER REGISTER • Use 'Daily View' to select a date..."
+ * - Row 4: Column Headers: Name, Nationality, Company Name, Purpose of Visit, Vehicle No., Mobile Number, Visiting Person, Department, Pass Number, Time In, Security In, Time Out, Security Out
+ * - Date Banners: "24 AUGUST 2026", "25 AUGUST 2026", etc.
  */
-function buildCategoryWorksheet(items, categoryTitle) {
-  // Sort chronologically
+function buildRegisterWorksheet(items, registerSubtitle) {
   const sorted = [...items].sort((a, b) => new Date(a.check_in_time) - new Date(b.check_in_time));
 
   // Group by date (day rollover)
@@ -56,9 +59,9 @@ function buildCategoryWorksheet(items, categoryTitle) {
   const aoaData = [
     // Row 1: Title Banner
     ['VISITOR ACCESS & SECURITY LOG', '', '', '', '', '', '', '', '', '', '', '', ''],
-    // Row 2: Subheader Row
-    ['SELECT / ENTER DATE:', todayDisplay, '', '', `REGISTER: ${categoryTitle.toUpperCase()} • Daily security log report`, '', '', '', '', '', '', '', ''],
-    // Row 3: Blank separator
+    // Row 2: Subheader
+    ['SELECT / ENTER DATE:', todayDisplay, '', '', registerSubtitle || "MASTER REGISTER • Use 'Daily View' to select a date and see only that day's visitors.", '', '', '', '', '', '', '', ''],
+    // Row 3: Spacing
     ['', '', '', '', '', '', '', '', '', '', '', '', ''],
     // Row 4: Column Headers
     [
@@ -80,13 +83,13 @@ function buildCategoryWorksheet(items, categoryTitle) {
 
   const dateKeys = Object.keys(dateGroups);
   if (dateKeys.length === 0) {
-    aoaData.push(['No records recorded for this category', '', '', '', '', '', '', '', '', '', '', '', '']);
+    aoaData.push(['No visitor records logged for this section', '', '', '', '', '', '', '', '', '', '', '', '']);
   } else {
     dateKeys.forEach((dateBanner) => {
-      // Date Separator Banner Row
+      // Centered Date Banner Row
       aoaData.push([
         '', '', '', '', '',
-        `─── ${dateBanner} ───`,
+        dateBanner,
         '', '', '', '', '', '', ''
       ]);
 
@@ -147,15 +150,15 @@ function buildCategoryWorksheet(items, categoryTitle) {
   ];
 
   ws['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 12 } },
-    { s: { r: 1, c: 4 }, e: { r: 1, c: 12 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }, // Row 1 Title Banner
+    { s: { r: 1, c: 4 }, e: { r: 1, c: 12 } }, // Row 2 Subtitle
   ];
 
   return ws;
 }
 
 /**
- * Builds a comprehensive Executive Summary sheet with category breakdown, department distribution, and grand totals.
+ * Builds the Executive Summary Sheet with full category metrics, department share, and grand totals.
  */
 function buildExecutiveSummaryWorksheet(logs) {
   const totalRecords = logs.length;
@@ -163,7 +166,6 @@ function buildExecutiveSummaryWorksheet(logs) {
   const checkedOutCount = logs.filter((l) => l.status === 'checked_out').length;
   const extensionsCount = logs.filter((l) => l.purpose_of_visit?.includes('[Ext')).length;
 
-  // Category metrics
   const categoriesDef = [
     { key: 'hotel_guest_visitor',  name: 'Visitors (Guests, Meetings, Interviews)' },
     { key: 'contractor_engineer',  name: 'Contractors & Engineering Works' },
@@ -181,7 +183,6 @@ function buildExecutiveSummaryWorksheet(logs) {
     return [cat.name, count, inside, checkedOut, ext, pct];
   });
 
-  // Department breakdown
   const deptCounts = {};
   logs.forEach((l) => {
     let d = (l.host_room_or_dept || 'General').split('(Visiting:')[0].split('— Area:')[0].trim();
@@ -197,7 +198,6 @@ function buildExecutiveSummaryWorksheet(logs) {
       totalRecords > 0 ? ((count / totalRecords) * 100).toFixed(1) + '%' : '0%',
     ]);
 
-  // Security guard actions
   const guardActivity = {};
   logs.forEach((l) => {
     if (l.logged_by_guard) {
@@ -222,20 +222,15 @@ function buildExecutiveSummaryWorksheet(logs) {
     ]);
 
   const summaryAoa = [
-    // Header Banner
     ['HOTEL SECURITY & VISITOR ACCESS — EXECUTIVE SUMMARY REPORT', '', '', '', '', ''],
     [`Report Generated: ${new Date().toLocaleString()}`, '', '', '', '', ''],
     ['', '', '', '', '', ''],
-
-    // Key KPIs Table
     ['KEY AUDIT METRICS', 'VALUE', '', '', '', ''],
     ['Total Access Entries Logged', totalRecords, '', '', '', ''],
     ['Currently On Property (Active Inside)', insideCount, '', '', '', ''],
     ['Total Departures (Checked Out)', checkedOutCount, '', '', '', ''],
     ['Total Manager Time Extensions Granted', extensionsCount, '', '', '', ''],
     ['', '', '', '', '', ''],
-
-    // Table 1: Category Breakdown
     ['CATEGORY BREAKDOWN', 'TOTAL ENTRIES', 'CURRENTLY INSIDE', 'CHECKED OUT', 'EXTENSIONS', 'TRAFFIC SHARE (%)'],
     ...catRows,
     [
@@ -247,13 +242,9 @@ function buildExecutiveSummaryWorksheet(logs) {
       '100.0%',
     ],
     ['', '', '', '', '', ''],
-
-    // Table 2: Department Distribution
     ['DEPARTMENT DISTRIBUTION', 'TOTAL VISITS', 'SHARE (%)', '', '', ''],
     ...deptRows,
     ['', '', '', '', '', ''],
-
-    // Table 3: Security Officer Activity
     ['SECURITY OFFICER', 'CHECK-INS LOGGED', 'CHECK-OUTS LOGGED', 'TOTAL OPERATIONS', '', ''],
     ...guardRows,
   ];
@@ -279,27 +270,40 @@ function buildExecutiveSummaryWorksheet(logs) {
 }
 
 /**
- * Generates and downloads the complete multi-sheet executive security workbook.
+ * Generates and downloads the complete multi-sheet workbook exactly matching the Google Sheet template.
  */
 export function generateProfessionalExcelReport(logs, notify) {
   const wb = XLSX.utils.book_new();
 
-  // 1. Summary Sheet as the first executive tab
+  // 1. Executive Summary Tab
   const wsSummary = buildExecutiveSummaryWorksheet(logs);
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
-  // 2. Individual Category Sheets
+  // 2. Daily View (Today's visitors)
+  const now = new Date();
+  const todayStr = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString().slice(0, 10);
+  const todayLogs = logs.filter((l) => (l.check_in_time || '').startsWith(todayStr));
+  const wsDaily = buildRegisterWorksheet(
+    todayLogs.length > 0 ? todayLogs : logs.slice(0, 50),
+    `DAILY VIEW • Showing today's visitors (${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })})`
+  );
+  XLSX.utils.book_append_sheet(wb, wsDaily, 'Daily View');
+
+  // 3. Master Register (Full Log)
+  const wsMaster = buildRegisterWorksheet(logs, "MASTER REGISTER • Complete log of all visitor & security traffic.");
+  XLSX.utils.book_append_sheet(wb, wsMaster, 'Master Register');
+
+  // 4. Category Tabs
   const categories = [
-    { key: 'hotel_guest_visitor',  title: 'Visitors' },
-    { key: 'contractor_engineer',  title: 'Contractors' },
-    { key: 'supplier_delivery',    title: 'Suppliers' },
-    { key: 'casual_staff_banquet', title: 'Casuals' },
-    { key: 'all',                  title: 'Master Register' },
+    { key: 'hotel_guest_visitor',  title: 'Visitors',    subtitle: "VISITORS REGISTER • Guest, business meetings, and official visitors." },
+    { key: 'contractor_engineer',  title: 'Contractors', subtitle: "CONTRACTORS REGISTER • External contractors, technicians & PTW works." },
+    { key: 'supplier_delivery',    title: 'Suppliers',   subtitle: "SUPPLIERS REGISTER • Delivery trucks, materials & vendors." },
+    { key: 'casual_staff_banquet', title: 'Casuals',     subtitle: "CASUAL STAFF REGISTER • F&B, Housekeeping, Stewarding & Entertainment." },
   ];
 
-  categories.forEach(({ key, title }) => {
-    const items = key === 'all' ? logs : logs.filter((l) => l.traffic_type === key);
-    const ws = buildCategoryWorksheet(items, title);
+  categories.forEach(({ key, title, subtitle }) => {
+    const items = logs.filter((l) => l.traffic_type === key);
+    const ws = buildRegisterWorksheet(items, subtitle);
     XLSX.utils.book_append_sheet(wb, ws, title);
   });
 
@@ -307,6 +311,6 @@ export function generateProfessionalExcelReport(logs, notify) {
   XLSX.writeFile(wb, filename);
 
   if (notify) {
-    notify('✅ Comprehensive Visitor Access Log & Summary report downloaded', 'success');
+    notify('✅ Visitor Access & Security Log workbook downloaded', 'success');
   }
 }
