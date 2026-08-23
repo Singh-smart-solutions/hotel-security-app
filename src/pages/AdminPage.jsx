@@ -546,40 +546,162 @@ function LogTable({ notify }) {
   );
 
   const exportExcel = () => {
-    const rows = displayed.map((l) => ({
-      'Pass #':       l.pass_badge_no,
-      'Full Name':    l.full_name,
-      'Type':         TRAFFIC_LABELS[l.traffic_type] || l.traffic_type,
-      'Company':      l.company_name || '',
-      'Nationality':  l.nationality || '',
-      'Doc #':        l.doc_number,
-      'Mobile':       l.mobile_number || '',
-      'Vehicle':      l.vehicle_plate || '',
-      'Gate':         l.gate_location || '',
-      'Check-In':     fmtDate(l.check_in_time),
-      'Check-Out':    fmtDate(l.check_out_time),
-      'Duration':     fmtDur(l.check_in_time, l.check_out_time),
-      'Status':       l.status,
-      'Guard':        l.logged_by_guard,
-      'Destination':  l.host_room_or_dept || '',
-    }));
-    const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    // Column widths
-    ws['!cols'] = [10,22,12,18,12,18,14,12,20,18,18,10,10,14,16].map((w) => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, ws, 'Security Log');
+
+    const formatTimeOnly = (d) => {
+      if (!d) return '—';
+      try {
+        const dt = new Date(d);
+        return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+      } catch { return d; }
+    };
+
+    const formatDateOnly = (d) => {
+      if (!d) return '';
+      try {
+        const dt = new Date(d);
+        return dt.toLocaleDateString([], { year: 'numeric', month: 'short', day: '2-digit' });
+      } catch { return ''; }
+    };
+
+    // Helper to build rows grouped by date with clear headers
+    const buildCategorySheetData = (items, categoryTitle) => {
+      // Sort chronologically
+      const sorted = [...items].sort((a, b) => new Date(a.check_in_time) - new Date(b.check_in_time));
+
+      // Group by date (midnight rollover)
+      const dateGroups = {};
+      sorted.forEach((l) => {
+        const dStr = formatDateOnly(l.check_in_time) || 'Unknown Date';
+        if (!dateGroups[dStr]) dateGroups[dStr] = [];
+        dateGroups[dStr].push(l);
+      });
+
+      const sheetRows = [];
+      let globalSl = 1;
+
+      Object.entries(dateGroups).forEach(([dateStr, logsForDate]) => {
+        // Date separator header
+        sheetRows.push({
+          'S/L No': `📅 DATE: ${dateStr.toUpperCase()}`,
+          'Date': dateStr,
+          'Full Name': '',
+          'Company / Agency': '',
+          'ID / Document #': '',
+          'Vehicle Number': '',
+          'Mobile Number': '',
+          'Nationality': '',
+          'Purpose / Work Description': '',
+          'Visiting Department': '',
+          'Visiting Person / Area': '',
+          'Pass #': '',
+          'Check-In Time': '',
+          'Security (Check-In Guard)': '',
+          'Check-Out Time': '',
+          'Security (Check-Out Guard)': '',
+          'Duration': '',
+          'Status': '',
+        });
+
+        logsForDate.forEach((l) => {
+          // Parse department & visiting person/area
+          let dept = l.host_room_or_dept || '—';
+          let visitingPerson = '—';
+          if (dept.includes('(Visiting:')) {
+            const parts = dept.split('(Visiting:');
+            dept = parts[0].trim();
+            visitingPerson = parts[1].replace(')', '').trim();
+          } else if (dept.includes('— Area:')) {
+            const parts = dept.split('— Area:');
+            dept = parts[0].trim();
+            visitingPerson = parts[1].trim();
+          }
+
+          sheetRows.push({
+            'S/L No': globalSl++,
+            'Date': formatDateOnly(l.check_in_time),
+            'Full Name': l.full_name || '—',
+            'Company / Agency': l.company_name || '—',
+            'ID / Document #': l.doc_number || '—',
+            'Vehicle Number': l.vehicle_plate || '—',
+            'Mobile Number': l.mobile_number || '—',
+            'Nationality': l.nationality || '—',
+            'Purpose / Work Description': l.purpose_of_visit || 'Standard Entry',
+            'Visiting Department': dept,
+            'Visiting Person / Area': visitingPerson,
+            'Pass #': l.pass_badge_no || 'N/A',
+            'Check-In Time': formatTimeOnly(l.check_in_time),
+            'Security (Check-In Guard)': l.logged_by_guard || '—',
+            'Check-Out Time': formatTimeOnly(l.check_out_time),
+            'Security (Check-Out Guard)': l.checkout_by_guard || '—',
+            'Duration': fmtDur(l.check_in_time, l.check_out_time),
+            'Status': (l.status || '').toUpperCase().replace('_', ' '),
+          });
+        });
+      });
+
+      return sheetRows;
+    };
+
+    const categories = [
+      { key: 'hotel_guest_visitor',  title: 'Visitors' },
+      { key: 'contractor_engineer',  title: 'Contractors' },
+      { key: 'supplier_delivery',    title: 'Suppliers' },
+      { key: 'casual_staff_banquet', title: 'Casuals' },
+      { key: 'all',                  title: 'All Logs' },
+    ];
+
+    const colWidths = [
+      { wch: 10 }, // S/L No
+      { wch: 14 }, // Date
+      { wch: 22 }, // Full Name
+      { wch: 22 }, // Company
+      { wch: 18 }, // ID Number
+      { wch: 15 }, // Vehicle
+      { wch: 16 }, // Mobile
+      { wch: 14 }, // Nationality
+      { wch: 32 }, // Purpose / Work Description
+      { wch: 20 }, // Department
+      { wch: 22 }, // Visiting Person / Area
+      { wch: 12 }, // Pass #
+      { wch: 15 }, // Check-In Time
+      { wch: 20 }, // Security Check-In
+      { wch: 15 }, // Check-Out Time
+      { wch: 20 }, // Security Check-Out
+      { wch: 12 }, // Duration
+      { wch: 14 }, // Status
+    ];
+
+    categories.forEach(({ key, title }) => {
+      const items = key === 'all' ? displayed : displayed.filter((l) => l.traffic_type === key);
+      const rows = buildCategorySheetData(items, title);
+      const ws = rows.length > 0 ? XLSX.utils.json_to_sheet(rows) : XLSX.utils.aoa_to_sheet([[`No ${title} records found for selected period`]]);
+      ws['!cols'] = colWidths;
+      XLSX.utils.book_append_sheet(wb, ws, title);
+    });
+
     // Summary sheet
     const summary = [
-      ['Hotel Security Log Report'],
-      [`Generated: ${new Date().toLocaleString()}`],
-      [`Total Records: ${rows.length}`],
-      [`Inside Now: ${logs.filter(l=>l.status==='inside').length}`],
-      [`Checked Out: ${logs.filter(l=>l.status==='checked_out').length}`],
+      ['HOTEL SECURITY LOG REPORT — MONTHLY / PERIOD SUMMARY'],
+      [`Generated On: ${new Date().toLocaleString()}`],
+      [''],
+      ['Category Breakdown', 'Count'],
+      ['Visitors', displayed.filter((l) => l.traffic_type === 'hotel_guest_visitor').length],
+      ['Contractors', displayed.filter((l) => l.traffic_type === 'contractor_engineer').length],
+      ['Suppliers', displayed.filter((l) => l.traffic_type === 'supplier_delivery').length],
+      ['Casual Staff', displayed.filter((l) => l.traffic_type === 'casual_staff_banquet').length],
+      ['Total Records', displayed.length],
+      [''],
+      ['Status Overview', 'Count'],
+      ['Currently Inside', displayed.filter((l) => l.status === 'inside').length],
+      ['Checked Out', displayed.filter((l) => l.status === 'checked_out').length],
     ];
-    const ws2 = XLSX.utils.aoa_to_sheet(summary);
-    XLSX.utils.book_append_sheet(wb, ws2, 'Summary');
-    XLSX.writeFile(wb, `security-log-${new Date().toISOString().slice(0,10)}.xlsx`);
-    notify('Excel report downloaded', 'success');
+    const wsSummary = XLSX.utils.aoa_to_sheet(summary);
+    wsSummary['!cols'] = [{ wch: 35 }, { wch: 15 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+    XLSX.writeFile(wb, `Hotel-Security-Report-${new Date().toISOString().slice(0,10)}.xlsx`);
+    notify('Comprehensive multi-sheet Excel report generated & downloaded', 'success');
   };
 
   const STATUS_BADGE = {

@@ -322,6 +322,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [manualWorkType,     setManualWorkType]     = useState('');
   const [workPermitNumber,   setWorkPermitNumber]   = useState('');
   const [areaOfWork,         setAreaOfWork]         = useState('');
+  const [workDescription,    setWorkDescription]    = useState('');
   const [selectedPass,  setSelectedPass]  = useState('');
   const [allowedHours,  setAllowedHours]  = useState(0.75);
   const [isIdExpired,   setIsIdExpired]   = useState(false);
@@ -388,6 +389,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setManualWorkType('');
     setWorkPermitNumber('');
     setAreaOfWork('');
+    setWorkDescription('');
     if (t?.requiresPass) {
       fetchPasses(t.passType);
     }
@@ -428,7 +430,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setDocNumber(''); setFullName(''); setMobileNumber(''); setCompanyName('');
     setVehiclePlate(''); setNationality(''); setIdExpiryDate(''); setHostDept('');
     setDeptSelection(''); setManualDept(''); setWhomToVisit('');
-    setContractorWorkType(''); setManualWorkType(''); setWorkPermitNumber(''); setAreaOfWork('');
+    setContractorWorkType(''); setManualWorkType(''); setWorkPermitNumber(''); setAreaOfWork(''); setWorkDescription('');
     setSelectedPass(''); setIsIdExpired(false); setStatusMsg('');
     const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
     if (t) setAllowedHours(t.hours);
@@ -704,6 +706,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       if (!effectiveWork) return notify('Contractor kind of work is required', 'error');
       if (!workPermitNumber.trim()) return notify('Work Permit Number (PTW #) is required', 'error');
       if (!areaOfWork.trim()) return notify('Area of Work is required', 'error');
+      if (!workDescription.trim()) return notify('Description of work is required', 'error');
     }
 
     if (requiresPass && !selectedPass) {
@@ -722,7 +725,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     } else if (trafficType === 'contractor_engineer') {
       const effectiveWork = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
       effectiveDept = `${baseDept} — Area: ${areaOfWork.trim()}`;
-      purpose = `Contractor: ${effectiveWork} (PTW: ${workPermitNumber.trim()})`;
+      purpose = `Contractor: ${effectiveWork} (PTW: ${workPermitNumber.trim()}) - ${workDescription.trim()}`;
     } else if (trafficType === 'casual_staff_banquet') {
       purpose = `Casual Shift (${allowedHours}h)`;
     }
@@ -1087,6 +1090,20 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                       required
                     />
                   </div>
+
+                  <div className="sm:col-span-2">
+                    <label className={LABEL}>
+                      Description of Work <span className="text-red-400">*</span>
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={workDescription}
+                      onChange={(e) => setWorkDescription(e.target.value)}
+                      placeholder="e.g. Repairing chiller compressor motor, pulling new feeder cables"
+                      className={INPUT}
+                      required
+                    />
+                  </div>
                 </>
               )}
 
@@ -1207,7 +1224,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
               const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
               const isMissingVisitorHost = trafficType === 'hotel_guest_visitor' && !whomToVisit.trim();
               const effectiveContractorWork = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
-              const isMissingContractorData = trafficType === 'contractor_engineer' && (!effectiveContractorWork || !workPermitNumber.trim() || !areaOfWork.trim());
+              const isMissingContractorData = trafficType === 'contractor_engineer' && (!effectiveContractorWork || !workPermitNumber.trim() || !areaOfWork.trim() || !workDescription.trim());
               const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept || isMissingVisitorHost || isMissingContractorData;
               const isMissingPass = requiresPass && !selectedPass;
               const isDisabled = submitting || isIdExpired || isMissingPass || isMissingData;
