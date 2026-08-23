@@ -20,10 +20,10 @@ const BTN_SEC = 'inline-flex items-center justify-center gap-2 rounded-xl border
 
 /* ── Traffic types ─────────────────────────────────────────── */
 const TRAFFIC_TYPES = [
-  { id: 'supplier_delivery',   label: 'Supplier / Truck',  icon: Truck,      hours: 0.75, passType: 'supplier'    },
-  { id: 'contractor_engineer', label: 'Contractor',        icon: Wrench,     hours: 4.0,  passType: 'contractor'  },
-  { id: 'casual_staff_banquet',label: 'Casual',            icon: Users,      hours: 9.0,  passType: 'visitor'     },
-  { id: 'hotel_guest_visitor', label: 'Guest Visitor',     icon: UserCheck,  hours: 2.0,  passType: 'visitor'     },
+  { id: 'supplier_delivery',   label: 'Supplier / Truck',  icon: Truck,      hours: 0.75, passType: 'supplier',   requiresPass: true  },
+  { id: 'contractor_engineer', label: 'Contractor',        icon: Wrench,     hours: 4.0,  passType: 'contractor', requiresPass: true  },
+  { id: 'casual_staff_banquet',label: 'Casual',            icon: Users,      hours: 8.0,  passType: 'casual',     requiresPass: false },
+  { id: 'hotel_guest_visitor', label: 'Visitor',           icon: UserCheck,  hours: 2.0,  passType: 'visitor',    requiresPass: true  },
 ];
 
 const GATE_OPTIONS = [
@@ -44,15 +44,17 @@ const CASUAL_DEPARTMENTS = [
 ];
 
 const STANDARD_DEPARTMENTS = [
-  'Main Kitchen',
-  'Receiving / Loading Bay',
-  'Engineering / Maintenance',
-  'Housekeeping',
+  'Finance',
+  'Purchasing',
+  'Marketing',
+  'Executive Office',
   'Front Office / Concierge',
+  'Housekeeping',
   'Food & Beverage',
+  'Main Kitchen',
+  'Engineering / Maintenance',
   'Security',
-  'Staff Canteen',
-  'Guest Room',
+  'Receiving / Loading Bay',
   'others',
 ];
 
@@ -307,6 +309,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [hostDept,      setHostDept]      = useState('');
   const [deptSelection, setDeptSelection] = useState('');
   const [manualDept,    setManualDept]    = useState('');
+  const [whomToVisit,   setWhomToVisit]   = useState('');
   const [selectedPass,  setSelectedPass]  = useState('');
   const [allowedHours,  setAllowedHours]  = useState(0.75);
   const [isIdExpired,   setIsIdExpired]   = useState(false);
@@ -343,7 +346,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const preserveScanFields = useRef(false);
 
   /* ── Derived ── */
-  const currentPassType = TRAFFIC_TYPES.find((t) => t.id === trafficType)?.passType || 'visitor';
+  const currentTrafficConfig = TRAFFIC_TYPES.find((t) => t.id === trafficType) || TRAFFIC_TYPES[0];
+  const requiresPass = currentTrafficConfig.requiresPass;
+  const currentPassType = currentTrafficConfig.passType;
   const insideLogs = logs.filter((l) => l.status === 'inside');
   const overstays  = insideLogs.filter((l) => {
     const ah = l.allowed_hours || 2;
@@ -366,7 +371,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setDeptSelection('');
     setHostDept('');
     setManualDept('');
-    fetchPasses(t?.passType || 'visitor');
+    setWhomToVisit('');
+    if (t?.requiresPass) {
+      fetchPasses(t.passType);
+    }
   }, [trafficType]);
 
   useEffect(() => () => { stopScanner(); }, []);
@@ -403,9 +411,11 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const resetForm = () => {
     setDocNumber(''); setFullName(''); setMobileNumber(''); setCompanyName('');
     setVehiclePlate(''); setNationality(''); setIdExpiryDate(''); setHostDept('');
-    setDeptSelection(''); setManualDept('');
+    setDeptSelection(''); setManualDept(''); setWhomToVisit('');
     setSelectedPass(''); setIsIdExpired(false); setStatusMsg('');
-    fetchPasses(currentPassType);
+    const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
+    if (t) setAllowedHours(t.hours);
+    if (t?.requiresPass) fetchPasses(t.passType);
   };
 
   /* ── Auto-lookup from history ── */
@@ -662,15 +672,26 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     e.preventDefault();
     if (!fullName.trim()) return notify('Full Name is required', 'error');
     if (!docNumber.trim()) return notify('Document / Emirates ID number is required', 'error');
-    if (!companyName.trim()) return notify('Company / Organization is required', 'error');
+    if (!companyName.trim()) return notify('Company / Organization / Agency is required', 'error');
     if (!mobileNumber.trim()) return notify('Mobile Number is required', 'error');
     if (!vehiclePlate.trim()) return notify('Vehicle Plate or Walk-in is required', 'error');
-    const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
-    if (!effectiveDept) return notify('Destination / Department is required', 'error');
-    if (!selectedPass) return notify('Please select or tap a pass number first', 'error');
+    const baseDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
+    if (!baseDept) return notify('Destination / Department is required', 'error');
+    if (trafficType === 'hotel_guest_visitor' && !whomToVisit.trim()) {
+      return notify('Please specify whom the visitor is going to visit', 'error');
+    }
+    if (requiresPass && !selectedPass) {
+      return notify('Please select or tap a pass badge first', 'error');
+    }
     if (isIdExpired) return notify('⛔ ACCESS DENIED — Document is expired', 'error');
 
     setSubmitting(true);
+
+    const effectiveDept = whomToVisit.trim()
+      ? `${baseDept} (Visiting: ${whomToVisit.trim()})`
+      : baseDept;
+
+    const assignedBadge = requiresPass ? selectedPass : 'CASUAL';
 
     const { error: logErr } = await supabase.from('hotel_security_logs').insert([{
       shift_id:          shift.id,
@@ -683,20 +704,22 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       nationality:       nationality.trim(),
       id_expiry_date:    idExpiryDate || null,
       traffic_type:      trafficType,
-      purpose_of_visit:  'Standard Entry',
+      purpose_of_visit:  trafficType === 'casual_staff_banquet' ? `Casual Shift (${allowedHours}h)` : 'Standard Entry',
       host_room_or_dept: effectiveDept,
-      pass_badge_no:     selectedPass,
-      allowed_hours:     allowedHours,
+      pass_badge_no:     assignedBadge,
+      allowed_hours:     Number(allowedHours) || 2,
       status:            'inside',
     }]);
 
     if (logErr) { setSubmitting(false); return notify(logErr.message, 'error'); }
 
-    await supabase.from('passes').update({ status: 'in_use' }).eq('pass_number', selectedPass);
+    if (requiresPass && selectedPass) {
+      await supabase.from('passes').update({ status: 'in_use' }).eq('pass_number', selectedPass);
+    }
 
     beep(true);
     if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
-    notify(`✅ ${fullName} checked in — Pass ${selectedPass} issued`, 'success');
+    notify(`✅ ${fullName} checked in — ${requiresPass ? `Pass ${selectedPass} issued` : 'Casual Logged'}`, 'success');
     resetForm();
     setSubmitting(false);
   };
@@ -945,52 +968,125 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                       setManualDept(e.target.value);
                       setHostDept(e.target.value);
                     }}
-                    placeholder="Enter manual department / destination"
+                    placeholder="Enter manual department name"
                     className={`${INPUT} mt-2`}
                     required
                   />
                 )}
               </div>
-            </div>
 
-            {/* ── Pass picker ── */}
-            <div>
-              <label className={LABEL}>
-                <Tag className="inline h-3 w-3 mr-1" />
-                Select Pass ({PASS_PREFIX[currentPassType]}-xxx available)
-              </label>
-              {passesLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-400 py-2">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading passes…
+              {trafficType === 'hotel_guest_visitor' && (
+                <div className="sm:col-span-2">
+                  <label className={LABEL}>
+                    Whom to Visit (Host / Manager Name) <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    value={whomToVisit}
+                    onChange={(e) => setWhomToVisit(e.target.value)}
+                    placeholder="e.g. John Smith / Finance Manager / Room 402"
+                    className={INPUT}
+                    required
+                  />
                 </div>
-              ) : noPasses ? (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-                  No {PASS_PREFIX[currentPassType]}-passes available. Create passes in Manager Portal → Passes.
+              )}
+
+              {/* ── Expected stay / work duration selector ── */}
+              <div className="sm:col-span-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                    <Clock className="h-3.5 w-3.5 text-indigo-400" />
+                    {trafficType === 'casual_staff_banquet'
+                      ? 'Expected Work Duration (Shift Hours)'
+                      : trafficType === 'contractor_engineer'
+                      ? 'Contractor Authorized Work Duration'
+                      : 'Allowed Stay Duration'}
+                  </label>
+                  <span className="text-xs font-bold text-white tabular-nums bg-indigo-600/30 border border-indigo-500/40 px-2 py-0.5 rounded-lg">
+                    {allowedHours} {allowedHours === 1 ? 'hour' : 'hours'}
+                  </span>
                 </div>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {availablePasses.map((p) => (
-                    <button key={p.id} type="button" onClick={() => setSelectedPass(p.pass_number)}
-                      className={`font-mono text-xs font-bold px-3 py-2 rounded-lg border transition-all ${
-                        selectedPass === p.pass_number
-                          ? 'border-indigo-500 bg-indigo-600/30 text-indigo-300 ring-1 ring-indigo-500 shadow-lg shadow-indigo-900/30'
-                          : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
-                      }`}>
-                      {p.pass_number} {p.nfc_uid && <Wifi className="inline h-2.5 w-2.5 ml-0.5 text-indigo-400" />}
+                <div className="flex flex-wrap items-center gap-2">
+                  {(trafficType === 'casual_staff_banquet' ? [4, 6, 8, 9, 12] : trafficType === 'contractor_engineer' ? [2, 4, 6, 8, 12] : [0.75, 1, 2, 4, 8]).map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setAllowedHours(h)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
+                        allowedHours === h
+                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-900/40'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      {h < 1 ? `${Math.round(h * 60)} mins` : `${h} hrs`}
                     </button>
                   ))}
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="text-xs text-slate-400">Custom:</span>
+                    <input
+                      type="number"
+                      min="0.25"
+                      max="24"
+                      step="0.5"
+                      value={allowedHours}
+                      onChange={(e) => setAllowedHours(parseFloat(e.target.value) || 1)}
+                      className="w-16 bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs text-slate-400">hrs</span>
+                  </div>
                 </div>
-              )}
-              <button type="button" onClick={startNfcScan}
-                className={`mt-2 flex items-center gap-1.5 text-xs transition ${nfcActive ? 'text-emerald-400 animate-pulse' : 'text-indigo-400 hover:text-indigo-300'}`}>
-                <Wifi className="h-3.5 w-3.5" /> {nfcActive ? 'NFC Active — Hold badge to phone' : 'Tap NFC Badge'}
-              </button>
-              {selectedPass && (
-                <div className="mt-2 flex items-center gap-2 text-xs text-emerald-400">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Pass <strong>{selectedPass}</strong> selected
-                </div>
-              )}
+              </div>
             </div>
+
+            {/* ── Pass picker / Casual notice ── */}
+            {requiresPass ? (
+              <div>
+                <label className={LABEL}>
+                  <Tag className="inline h-3 w-3 mr-1" />
+                  Select Pass ({PASS_PREFIX[currentPassType]}-xxx available) <span className="text-red-400">*</span>
+                </label>
+                {passesLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-slate-400 py-2">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading passes…
+                  </div>
+                ) : noPasses ? (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+                    No {PASS_PREFIX[currentPassType]}-passes available. Create passes in Manager Portal → Passes.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {availablePasses.map((p) => (
+                      <button key={p.id} type="button" onClick={() => setSelectedPass(p.pass_number)}
+                        className={`font-mono text-xs font-bold px-3 py-2 rounded-lg border transition-all ${
+                          selectedPass === p.pass_number
+                            ? 'border-indigo-500 bg-indigo-600/30 text-indigo-300 ring-1 ring-indigo-500 shadow-lg shadow-indigo-900/30'
+                            : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                        }`}>
+                        {p.pass_number} {p.nfc_uid && <Wifi className="inline h-2.5 w-2.5 ml-0.5 text-indigo-400" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button type="button" onClick={startNfcScan}
+                  className={`mt-2 flex items-center gap-1.5 text-xs transition ${nfcActive ? 'text-emerald-400 animate-pulse' : 'text-indigo-400 hover:text-indigo-300'}`}>
+                  <Wifi className="h-3.5 w-3.5" /> {nfcActive ? 'NFC Active — Hold badge to phone' : 'Tap NFC Badge'}
+                </button>
+                {selectedPass && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-emerald-400">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Pass <strong>{selectedPass}</strong> selected
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/30 p-3 flex items-center gap-3">
+                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-indigo-600/30 text-indigo-300">
+                  <Users className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">Casual Staff Entry — No Physical Pass Needed</p>
+                  <p className="text-[11px] text-indigo-300">Entry logged directly into security system for {allowedHours} hours.</p>
+                </div>
+              </div>
+            )}
 
             {/* ── Expired block ── */}
             {isIdExpired && (
@@ -1009,8 +1105,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
             {(() => {
               const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
-              const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept;
-              const isDisabled = submitting || isIdExpired || !selectedPass || isMissingData;
+              const isMissingVisitorHost = trafficType === 'hotel_guest_visitor' && !whomToVisit.trim();
+              const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept || isMissingVisitorHost;
+              const isMissingPass = requiresPass && !selectedPass;
+              const isDisabled = submitting || isIdExpired || isMissingPass || isMissingData;
 
               return (
                 <button
@@ -1019,7 +1117,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                   className={`${BTN_PRI} w-full py-3 text-sm ${
                     isIdExpired
                       ? '!from-red-900 !to-red-900 !opacity-40 cursor-not-allowed'
-                      : isMissingData && selectedPass
+                      : isDisabled
                       ? '!from-slate-700 !to-slate-800 !opacity-60 cursor-not-allowed'
                       : ''
                   }`}
@@ -1033,9 +1131,11 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                     ? 'Check-In Blocked — Expired Document'
                     : isMissingData
                     ? 'Fill All Required Fields (*)'
-                    : !selectedPass
-                    ? 'Select or Tap Pass Badge'
-                    : `Confirm Check-In & Issue Pass (${selectedPass})`}
+                    : isMissingPass
+                    ? 'Select or Tap Pass Badge (*)'
+                    : requiresPass
+                    ? `Confirm Check-In & Issue Pass (${selectedPass})`
+                    : `Confirm Check-In (Casual — ${allowedHours}h)`}
                 </button>
               );
             })()}
