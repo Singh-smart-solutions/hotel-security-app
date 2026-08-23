@@ -358,6 +358,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [nfcActive,       setNfcActive]       = useState(false);
   const [nfcCheckoutMode, setNfcCheckoutMode] = useState(false);
 
+  /* ── Live Clock & Notification Tracking ── */
+  const [currentTime, setCurrentTime] = useState(Date.now());
+  const notifiedOverstaysRef = useRef(new Set());
+
   /* ── Refs ── */
   const videoRef           = useRef(null);
   const cameraStreamRef    = useRef(null);
@@ -372,11 +376,35 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const currentPassType = currentTrafficConfig.passType;
   const insideLogs = logs.filter((l) => l.status === 'inside');
   const overstays  = insideLogs.filter((l) => {
-    const ah = l.allowed_hours || 2;
-    return (Date.now() - new Date(l.check_in_time).getTime()) / 3600000 > ah;
+    const ah = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2;
+    return (currentTime - new Date(l.check_in_time).getTime()) / 3600000 > ah;
   });
 
   /* ── Effects ── */
+  // 1. Live Background Ticker (Every 5 seconds - auto detects overstays without refreshing)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setCurrentTime(now);
+
+      // Check all inside logs for new overstays
+      insideLogs.forEach((l) => {
+        const elapsedH = (now - new Date(l.check_in_time).getTime()) / 3600000;
+        const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2;
+
+        if (elapsedH > allowedH && !notifiedOverstaysRef.current.has(l.id)) {
+          notifiedOverstaysRef.current.add(l.id);
+          beep(false);
+          if ('vibrate' in navigator) navigator.vibrate([150, 50, 150, 50, 250]);
+          const durDisplay = allowedH < 1 ? `${Math.round(allowedH * 60)} mins` : `${allowedH} hrs`;
+          notify(`🚨 OVERSTAY ALERT: ${l.full_name} (${l.pass_badge_no}) has exceeded ${durDisplay} allowed stay!`, 'error');
+        }
+      });
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [insideLogs, notify, beep]);
+
   useEffect(() => {
     fetchLogs();
     const channel = supabase.channel('guard-terminal-logs')
@@ -1364,7 +1392,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           ) : (
             <div className="space-y-2">
               {insideLogs.map((l) => {
-                const elapsedHours = (Date.now() - new Date(l.check_in_time).getTime()) / 3600000;
+                const elapsedHours = (currentTime - new Date(l.check_in_time).getTime()) / 3600000;
                 const allowedH = l.allowed_hours || 2;
                 const over = elapsedHours > allowedH;
                 const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');

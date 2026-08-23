@@ -538,7 +538,14 @@ function LogTable({ notify }) {
     setLogs(data || []); setLoading(false);
   }, [status, ttype, dateFrom, dateTo]);
 
-  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+  useEffect(() => {
+    fetchLogs();
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+      fetchLogs();
+    }, 10000); // 10s auto-refresh
+    return () => clearInterval(interval);
+  }, [fetchLogs]);
 
   const displayed = logs.filter((l) =>
     !search || [l.full_name, l.doc_number, l.pass_badge_no, l.company_name, l.mobile_number]
