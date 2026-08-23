@@ -354,6 +354,12 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [handoverNote, setHandoverNote] = useState('');
   const [endingShift,  setEndingShift]  = useState(false);
 
+  /* ── Extend time modal ── */
+  const [extendModalLog, setExtendModalLog] = useState(null);
+  const [extraHours,     setExtraHours]     = useState(2);
+  const [extendReason,   setExtendReason]   = useState('');
+  const [extending,      setExtending]      = useState(false);
+
   /* ── NFC state ── */
   const [nfcActive,       setNfcActive]       = useState(false);
   const [nfcCheckoutMode, setNfcCheckoutMode] = useState(false);
@@ -696,6 +702,36 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notify]); // handleCheckOut captured from closure — safe, defined by first render paint
 
+
+  /* ── Extend Stay / Shift Duration ── */
+  const handleExtendStay = async (e) => {
+    e.preventDefault();
+    if (!extendModalLog) return;
+    if (!extendReason.trim()) return notify('Reason / Approver name is required to extend time', 'error');
+    const addH = Number(extraHours) || 1;
+    if (addH <= 0) return notify('Extension hours must be greater than 0', 'error');
+
+    setExtending(true);
+    const currentAh = Number(extendModalLog.allowed_hours) || 2;
+    const newAh = currentAh + addH;
+    const existingPurpose = extendModalLog.purpose_of_visit || 'Standard Entry';
+    const note = `[Ext +${addH}h: ${extendReason.trim()} (Logged by ${guard.name})]`;
+    const updatedPurpose = `${existingPurpose} ${note}`.trim();
+
+    const { error } = await supabase.from('hotel_security_logs').update({
+      allowed_hours: newAh,
+      purpose_of_visit: updatedPurpose,
+    }).eq('id', extendModalLog.id);
+
+    setExtending(false);
+    if (error) return notify('Failed to extend: ' + error.message, 'error');
+
+    beep(true);
+    if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
+    notify(`✅ Extended ${extendModalLog.full_name} by +${addH}h (Total allowed: ${newAh}h)`, 'success');
+    setExtendModalLog(null);
+    fetchLogs();
+  };
 
   /* ── Check-in with strict completeness validation ── */
   const handleCheckIn = async (e) => {
@@ -1368,13 +1404,27 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                         {l.company_name || l.traffic_type} • {fmtDuration(l.check_in_time)} inside
                       </p>
                     </div>
-                    {/* Manual checkout always available as fallback */}
-                    <button
-                      onClick={() => handleCheckOut(l.id, l.pass_badge_no)}
-                      className="flex-shrink-0 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 transition"
-                    >
-                      Check-Out
-                    </button>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExtendModalLog(l);
+                          setExtraHours(2);
+                          setExtendReason('');
+                        }}
+                        className="rounded-lg bg-indigo-600/20 border border-indigo-500/30 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 hover:bg-indigo-600/30 transition flex items-center gap-1"
+                        title="Extend allowed stay/shift time"
+                      >
+                        <Clock className="h-3 w-3" /> + Extend
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCheckOut(l.id, l.pass_badge_no)}
+                        className="rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-600/30 transition"
+                      >
+                        Check-Out
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -1398,6 +1448,118 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           </div>
         )}
       </main>
+
+      {/* ── Extend Stay / Shift Modal ── */}
+      {extendModalLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className={`w-full max-w-md p-6 ${CARD}`}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600/30 text-indigo-300">
+                  <Clock className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Extend Stay / Shift Time</h3>
+                  <p className="text-xs text-slate-400">{extendModalLog.full_name} ({extendModalLog.pass_badge_no})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExtendModalLog(null)}
+                className="text-slate-400 hover:text-white transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExtendStay} className="space-y-4">
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1 text-xs text-slate-300">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Department / Destination:</span>
+                  <span className="font-semibold text-white">{extendModalLog.host_room_or_dept || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Current Allowed Duration:</span>
+                  <span className="font-semibold text-white">{extendModalLog.allowed_hours || 2} hours</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Elapsed Time Inside:</span>
+                  <span className="font-semibold text-amber-300">{fmtDuration(extendModalLog.check_in_time)}</span>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className={LABEL}>Additional Hours to Add</label>
+                  <span className="text-xs font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-lg">
+                    New Total: {(Number(extendModalLog.allowed_hours) || 2) + Number(extraHours)} hrs
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {[1, 2, 3, 4, 8].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setExtraHours(h)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                        extraHours === h
+                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-900/40'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      +{h} hr{h > 1 ? 's' : ''}
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="text-xs text-slate-400">Custom:</span>
+                    <input
+                      type="number"
+                      min="0.5"
+                      max="24"
+                      step="0.5"
+                      value={extraHours}
+                      onChange={(e) => setExtraHours(parseFloat(e.target.value) || 1)}
+                      className="w-16 bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs text-slate-400">hrs</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className={LABEL}>
+                  Reason / Approving Department Manager <span className="text-red-400">*</span>
+                </label>
+                <input
+                  value={extendReason}
+                  onChange={(e) => setExtendReason(e.target.value)}
+                  placeholder="e.g. Approved by Chef Marco (F&B) for banquet overtime"
+                  className={INPUT}
+                  required
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setExtendModalLog(null)}
+                  className={`${BTN_SEC} flex-1 py-2.5 text-sm`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={extending || !extendReason.trim()}
+                  className={`${BTN_PRI} flex-1 py-2.5 text-sm`}
+                >
+                  {extending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Confirm Extension (+{extraHours}h)
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Handover / End shift modal ── */}
       {handoverOpen && (
