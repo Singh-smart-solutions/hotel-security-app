@@ -381,70 +381,6 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     return (currentTime - new Date(l.check_in_time).getTime()) / 3600000 > ah;
   });
 
-  /* ── Effects ── */
-  // 1. Live Background Ticker (Every 5 seconds - auto detects overstays without refreshing)
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      setCurrentTime(now);
-
-      // Check all inside logs for new overstays
-      insideLogs.forEach((l) => {
-        const elapsedH = (now - new Date(l.check_in_time).getTime()) / 3600000;
-        const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2;
-
-        if (elapsedH > allowedH && !notifiedOverstaysRef.current.has(l.id)) {
-          notifiedOverstaysRef.current.add(l.id);
-          beep(false);
-          if ('vibrate' in navigator) navigator.vibrate([150, 50, 150, 50, 250]);
-          const durDisplay = allowedH < 1 ? `${Math.round(allowedH * 60)} mins` : `${allowedH} hrs`;
-          notify(`🚨 OVERSTAY ALERT: ${l.full_name} (${l.pass_badge_no}) has exceeded ${durDisplay} allowed stay!`, 'error');
-        }
-      });
-    }, 5000);
-
-    return () => clearInterval(timer);
-  }, [insideLogs, notify, beep]);
-
-  useEffect(() => {
-    fetchLogs();
-    const channel = supabase.channel('guard-terminal-logs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'hotel_security_logs' }, (payload) => {
-        if (payload.eventType === 'UPDATE' && payload.new && payload.old) {
-          if ((payload.new.allowed_hours || 0) > (payload.old.allowed_hours || 0)) {
-            beep(true);
-            if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
-            notify(`⏱️ Manager Extended ${payload.new.full_name} (New Allowed: ${payload.new.allowed_hours}h)`, 'success');
-          }
-        }
-        fetchLogs();
-      })
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [shift]);
-
-  useEffect(() => {
-    const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
-    if (t) setAllowedHours(t.hours);
-    setSelectedPass('');
-    setDeptSelection('');
-    setHostDept('');
-    setManualDept('');
-    setWhomToVisit('');
-    setVisitorPurpose('');
-    setManualVisitorPurpose('');
-    setContractorWorkType('');
-    setManualWorkType('');
-    setWorkPermitNumber('');
-    setAreaOfWork('');
-    setWorkDescription('');
-    if (t?.requiresPass) {
-      fetchPasses(t.passType);
-    }
-  }, [trafficType]);
-
-  useEffect(() => () => { stopScanner(); }, []);
-
   /* ── Data fetchers ── */
   const fetchLogs = useCallback(async () => {
     const { data } = await supabase.from('hotel_security_logs')
@@ -1548,4 +1484,70 @@ export default function GuardPage({ notify }) {
   if (!guardSession) return <GuardLogin onLogin={handleLogin} notify={notify} />;
   if (!activeShift)  return <ShiftStart guard={guardSession} onStart={handleStart} onLogout={handleLogout} notify={notify} />;
   return <GuardTerminal guard={guardSession} shift={activeShift} onEndShift={handleEndShift} onLogout={handleLogout} notify={notify} />;
-}
+}  /* ── Effects ── */
+  // 1. Live Background Ticker (Every 5 seconds - auto detects overstays without refreshing)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setCurrentTime(now);
+
+      // Check all inside logs for new overstays
+      insideLogs.forEach((l) => {
+        const elapsedH = (now - new Date(l.check_in_time).getTime()) / 3600000;
+        const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2;
+
+        if (elapsedH > allowedH && !notifiedOverstaysRef.current.has(l.id)) {
+          notifiedOverstaysRef.current.add(l.id);
+          beep(false);
+          if ('vibrate' in navigator) navigator.vibrate([150, 50, 150, 50, 250]);
+          const durDisplay = allowedH < 1 ? `${Math.round(allowedH * 60)} mins` : `${allowedH} hrs`;
+          notify(`🚨 OVERSTAY ALERT: ${l.full_name} (${l.pass_badge_no}) has exceeded ${durDisplay} allowed stay!`, 'error');
+        }
+      });
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [insideLogs, notify, beep]);
+
+  useEffect(() => {
+    fetchLogs();
+    const channel = supabase.channel('guard-terminal-logs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hotel_security_logs' }, (payload) => {
+        if (payload.eventType === 'UPDATE' && payload.new && payload.old) {
+          if ((payload.new.allowed_hours || 0) > (payload.old.allowed_hours || 0)) {
+            beep(true);
+            if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
+            notify(`⏱️ Manager Extended ${payload.new.full_name} (New Allowed: ${payload.new.allowed_hours}h)`, 'success');
+          }
+        }
+        fetchLogs();
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [shift]);
+
+  useEffect(() => {
+    const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
+    if (t) setAllowedHours(t.hours);
+    setSelectedPass('');
+    setDeptSelection('');
+    setHostDept('');
+    setManualDept('');
+    setWhomToVisit('');
+    setVisitorPurpose('');
+    setManualVisitorPurpose('');
+    setContractorWorkType('');
+    setManualWorkType('');
+    setWorkPermitNumber('');
+    setAreaOfWork('');
+    setWorkDescription('');
+    if (t?.requiresPass) {
+      fetchPasses(t.passType);
+    }
+  }, [trafficType]);
+
+  useEffect(() => () => { stopScanner(); }, []);
+
+
+
+
