@@ -562,6 +562,21 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     }
   }, [applyExtractedFields, beep, closeDocumentScanner, notify]);
 
+  /* ── Check-out ── */
+  const handleCheckOut = useCallback(async (id, passNum) => {
+    const { error } = await supabase.from('hotel_security_logs').update({
+      status:          'checked_out',
+      check_out_time:  new Date().toISOString(),
+      checkout_by_guard: guard.name,
+    }).eq('id', id);
+    if (error) return notify(error.message, 'error');
+    if (passNum) await supabase.from('passes').update({ status: 'available' }).eq('pass_number', passNum);
+    beep(true);
+    if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
+    notify(`Pass ${passNum} checked out`, 'success');
+    fetchLogs(); fetchPasses(currentPassType);
+  }, [guard.name, notify, beep, fetchLogs, fetchPasses, currentPassType]);
+
   /* ── NFC check-in (pass picker) ── */
   const startNfcScan = useCallback(async () => {
     if (!('NDEFReader' in window)) {
@@ -686,20 +701,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setSubmitting(false);
   };
 
-  /* ── Check-out ── */
-  const handleCheckOut = useCallback(async (id, passNum) => {
-    const { error } = await supabase.from('hotel_security_logs').update({
-      status:          'checked_out',
-      check_out_time:  new Date().toISOString(),
-      checkout_by_guard: guard.name,
-    }).eq('id', id);
-    if (error) return notify(error.message, 'error');
-    if (passNum) await supabase.from('passes').update({ status: 'available' }).eq('pass_number', passNum);
-    beep(true);
-    if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
-    notify(`Pass ${passNum} checked out`, 'success');
-    fetchLogs(); fetchPasses(currentPassType);
-  }, [guard.name, notify, beep, fetchLogs, fetchPasses, currentPassType]);
+
 
   /* ── End shift ── */
   const handleEndShift = async () => {
