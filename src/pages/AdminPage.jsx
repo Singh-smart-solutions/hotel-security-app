@@ -519,13 +519,21 @@ function PassManager({ session, notify }) {
    LOG TABLE
 ══════════════════════════════════════════════════════════════ */
 function LogTable({ notify }) {
-  const [logs,    setLogs]    = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [search,  setSearch]  = useState('');
-  const [status,  setStatus]  = useState('all');
-  const [ttype,   setTtype]   = useState('all');
-  const [dateFrom,setDateFrom]= useState('');
-  const [dateTo,  setDateTo]  = useState('');
+  const [logs,           setLogs]           = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [search,         setSearch]         = useState('');
+  const [status,         setStatus]         = useState('all');
+  const [ttype,          setTtype]          = useState('all');
+  const [dateFrom,       setDateFrom]       = useState('');
+  const [dateTo,         setDateTo]         = useState('');
+  const [currentTime,    setCurrentTime]    = useState(Date.now());
+
+  /* ── Manager Extend Time Modal ── */
+  const [extendModalLog, setExtendModalLog] = useState(null);
+  const [extraHours,     setExtraHours]     = useState(2);
+  const [extendReason,   setExtendReason]   = useState('');
+  const [extendApprover, setExtendApprover] = useState('');
+  const [extending,      setExtending]      = useState(false);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
