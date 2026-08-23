@@ -545,6 +545,34 @@ function LogTable({ notify }) {
       .some((f) => f?.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const handleExtendStay = async (e) => {
+    e.preventDefault();
+    if (!extendModalLog) return;
+    if (!extendReason.trim()) return notify('Reason for extension is required', 'error');
+    if (!extendApprover.trim()) return notify('Approving manager / contact name is required', 'error');
+    const addH = Number(extraHours) || 1;
+    if (addH <= 0) return notify('Extension hours must be greater than 0', 'error');
+
+    setExtending(true);
+    const currentAh = Number(extendModalLog.allowed_hours) || 2;
+    const newAh = currentAh + addH;
+    const existingPurpose = extendModalLog.purpose_of_visit || 'Standard Entry';
+    const note = `[Ext +${addH}h | Reason: ${extendReason.trim()} | Approved By: ${extendApprover.trim()} (Manager Portal)]`;
+    const updatedPurpose = `${existingPurpose} ${note}`.trim();
+
+    const { error } = await supabase.from('hotel_security_logs').update({
+      allowed_hours: newAh,
+      purpose_of_visit: updatedPurpose,
+    }).eq('id', extendModalLog.id);
+
+    setExtending(false);
+    if (error) return notify('Failed to extend time: ' + error.message, 'error');
+
+    notify(`✅ Extended ${extendModalLog.full_name} by +${addH}h (Total allowed: ${newAh}h)`, 'success');
+    setExtendModalLog(null);
+    fetchLogs();
+  };
+
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
 
@@ -745,7 +773,7 @@ function LogTable({ notify }) {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-white/5">
-                {['Pass #','Name','Type','Company','Check-In','Check-Out','Duration','Status','Guard'].map((h) => (
+                {['Pass #','Name','Type','Company','Check-In','Check-Out','Duration','Status','Guard','Action'].map((h) => (
                   <th key={h} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">{h}</th>
                 ))}
               </tr>
@@ -766,13 +794,156 @@ function LogTable({ notify }) {
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-slate-400">{l.logged_by_guard}</td>
+                  <td className="px-3 py-2.5 text-xs">
+                    {l.status === 'inside' ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExtendModalLog(l);
+                          setExtraHours(2);
+                          setExtendReason('');
+                          setExtendApprover('');
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg bg-indigo-600/20 border border-indigo-500/40 px-2 py-1 text-[11px] font-bold text-indigo-300 hover:bg-indigo-600/30 transition shadow-sm"
+                        title="Extend allowed stay/shift time"
+                      >
+                        <Clock className="h-3 w-3" /> + Extend
+                      </button>
+                    ) : (
+                      <span className="text-slate-600 text-xs">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
               {displayed.length === 0 && (
-                <tr><td colSpan={9} className="py-10 text-center text-sm text-slate-500">No records found</td></tr>
+                <tr><td colSpan={10} className="py-10 text-center text-sm text-slate-500">No records found</td></tr>
               )}
             </tbody>
           </table>
+        </div>
+      )}
+      {/* ── Manager Extend Time Modal ── */}
+      {extendModalLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className={`w-full max-w-md p-6 ${CARD}`}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600/30 text-indigo-300">
+                  <Clock className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Manager Override: Extend Time</h3>
+                  <p className="text-xs text-slate-400">{extendModalLog.full_name} ({extendModalLog.pass_badge_no})</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExtendModalLog(null)}
+                className="text-slate-400 hover:text-white transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExtendStay} className="space-y-4">
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-1 text-xs text-slate-300">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Department / Destination:</span>
+                  <span className="font-semibold text-white">{extendModalLog.host_room_or_dept || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Current Allowed Duration:</span>
+                  <span className="font-semibold text-white">{extendModalLog.allowed_hours || 2} hours</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Elapsed Time Inside:</span>
+                  <span className="font-semibold text-amber-300">{fmtDur(extendModalLog.check_in_time, new Date().toISOString())}</span>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className={LABEL}>Additional Hours to Add</label>
+                  <span className="text-xs font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-lg">
+                    New Total: {(Number(extendModalLog.allowed_hours) || 2) + Number(extraHours)} hrs
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {[1, 2, 3, 4, 8].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setExtraHours(h)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                        extraHours === h
+                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-900/40'
+                          : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      +{h} hr{h > 1 ? 's' : ''}
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-1.5 ml-auto">
+                    <span className="text-xs text-slate-400">Custom:</span>
+                    <input
+                      type="number"
+                      min="0.5"
+                      max="24"
+                      step="0.5"
+                      value={extraHours}
+                      onChange={(e) => setExtraHours(parseFloat(e.target.value) || 1)}
+                      className="w-16 bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs text-slate-400">hrs</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className={LABEL}>
+                  Reason for Extension <span className="text-red-400">*</span>
+                </label>
+                <input
+                  value={extendReason}
+                  onChange={(e) => setExtendReason(e.target.value)}
+                  placeholder="e.g. Banquet event overtime / Compressor repair continuation"
+                  className={INPUT}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className={LABEL}>
+                  Approved By (Department Manager / Contact) <span className="text-red-400">*</span>
+                </label>
+                <input
+                  value={extendApprover}
+                  onChange={(e) => setExtendApprover(e.target.value)}
+                  placeholder="e.g. Chef Marco (F&B Director) / Mr. John (Engineering Mgr)"
+                  className={INPUT}
+                  required
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setExtendModalLog(null)}
+                  className={`${BTN_SEC} flex-1 py-2.5 text-sm`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={extending || !extendReason.trim() || !extendApprover.trim()}
+                  className={`${BTN_PRI} flex-1 py-2.5 text-sm`}
+                >
+                  {extending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Confirm Manager Extension (+{extraHours}h)
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>
