@@ -261,6 +261,17 @@ function buildStyledRegisterWorksheet(items, registerSubtitle) {
   ];
 
   ws['!merges'] = merges;
+
+  // Freeze top 4 header rows (Title banner, Date box, Column headers stay fixed when scrolling down)
+  ws['!views'] = [
+    {
+      state: 'frozen',
+      ySplit: 4,
+      topLeftCell: 'A5',
+      activeCell: 'A5',
+    },
+  ];
+
   return ws;
 }
 
@@ -418,6 +429,16 @@ function buildStyledSummaryWorksheet(logs) {
   ws['!merges'] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
     { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+  ];
+
+  // Freeze top summary banner
+  ws['!views'] = [
+    {
+      state: 'frozen',
+      ySplit: 3,
+      topLeftCell: 'A4',
+      activeCell: 'A4',
+    },
   ];
 
   return ws;
