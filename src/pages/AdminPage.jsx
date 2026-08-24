@@ -525,6 +525,7 @@ function LogTable({ notify }) {
   const [search,         setSearch]         = useState('');
   const [status,         setStatus]         = useState('all');
   const [ttype,          setTtype]          = useState('all');
+  const [timeRange,      setTimeRange]      = useState('24h');
   const [dateFrom,       setDateFrom]       = useState('');
   const [dateTo,         setDateTo]         = useState('');
   const [currentTime,    setCurrentTime]    = useState(Date.now());
@@ -617,6 +618,11 @@ function LogTable({ notify }) {
             placeholder="Search name, doc, pass, company…"
             className={`${INPUT} pl-9`} />
         </div>
+        <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)} className={`${INPUT} w-auto text-xs py-2 appearance-none font-semibold text-violet-300`}>
+          <option value="24h">🕒 Last 24 Hours (Active Window)</option>
+          <option value="12h">🕒 Last 12 Hours</option>
+          <option value="all">📅 All Time / Custom Dates</option>
+        </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className={`${INPUT} w-36 appearance-none`}>
           <option value="all">All Status</option>
           <option value="inside">Inside</option>
