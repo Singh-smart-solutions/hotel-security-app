@@ -390,10 +390,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
   /* ── Data fetchers ── */
   const fetchLogs = useCallback(async () => {
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data } = await supabase.from('hotel_security_logs')
       .select('*')
-      .or(`check_in_time.gte.${twelveHoursAgo},status.eq.inside`)
+      .or(`check_in_time.gte.${twentyFourHoursAgo},status.eq.inside`)
       .order('check_in_time', { ascending: false });
     setLogs(data || []);
   }, []);
@@ -1606,7 +1606,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                 📋 Gate Security Logs & Master Register
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Showing last 12 hours active shift data & on-property visitors ({logs.length} entries) • Auto-refreshes live
+                Showing last 24 hours security data & on-property visitors ({logs.length} entries) • Auto-refreshes live
               </p>
             </div>
 
