@@ -1568,7 +1568,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                     </div>
 
                     {/* Check-out action with Overstay Lock */}
-                    {isOverstay && !extGranted ? (
+                    {over && !isExtended ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -1585,7 +1585,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => handleCheckOut(l.id, l.pass_badge_no, isOverstay, extGranted)}
+                        onClick={() => handleCheckOut(l.id, l.pass_badge_no, over, isExtended)}
                         className="flex-shrink-0 mt-0.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-600/30 transition shadow-sm"
                       >
                         Check-Out
