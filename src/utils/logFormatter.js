@@ -1,6 +1,6 @@
 /**
  * Parses structured security log fields for clean, rich presentation
- * across Guard Terminal and Manager Portal tables.
+ * across Guard Terminal, Manager Portal, and Excel Exporter.
  */
 export function parseLogDetails(log) {
   if (!log) return {};
@@ -48,14 +48,26 @@ export function parseLogDetails(log) {
     workArea = parts[1].trim();
   }
 
-  if (cleanPurpose.includes('Kind:') || cleanPurpose.includes('PTW:')) {
+  // Match Pattern A: "Contractor: Electrical (PTW: Wp-02) - Description"
+  const contractorMatch = cleanPurpose.match(/Contractor:\s*([^(]+?)\s*\(PTW:\s*([^)]+)\)\s*(?:-\s*(.*))?/i);
+  if (contractorMatch) {
+    workKind = contractorMatch[1].trim();
+    workPermit = contractorMatch[2].trim();
+    workDescription = (contractorMatch[3] || '').trim();
+  } else {
+    // Match Pattern B: "Kind: Electrical | PTW: 405 | Desc: Chiller"
     const kindMatch = cleanPurpose.match(/Kind:\s*([^|]+)/i);
-    const ptwMatch  = cleanPurpose.match(/PTW:\s*([^|]+)/i);
+    const ptwMatch  = cleanPurpose.match(/PTW:\s*([^|)\n]+)/i);
     const descMatch = cleanPurpose.match(/Desc:\s*(.*)/i);
 
     if (kindMatch) workKind = kindMatch[1].trim();
     if (ptwMatch)  workPermit = ptwMatch[1].trim();
     if (descMatch) workDescription = descMatch[1].trim();
+  }
+
+  // If contractor and workKind is still empty, cleanPurpose is workKind
+  if (log.traffic_type === 'contractor_engineer' && !workKind) {
+    workKind = cleanPurpose.replace(/^Contractor:\s*/i, '').trim() || 'General Work';
   }
 
   return {
@@ -65,7 +77,7 @@ export function parseLogDetails(log) {
     workPermit,
     workKind,
     workDescription,
-    cleanPurpose: cleanPurpose || log.traffic_type || 'Standard Entry',
+    cleanPurpose: cleanPurpose || (log.traffic_type === 'supplier_delivery' ? 'Delivery' : 'Standard Entry'),
     isExtended,
     extHours,
     extReason,

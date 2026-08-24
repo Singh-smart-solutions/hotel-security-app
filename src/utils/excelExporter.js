@@ -1,5 +1,6 @@
 import XLSX from 'xlsx-js-style';
 import { supabase } from '../supabaseClient';
+import { parseLogDetails } from './logFormatter';
 
 const TRAFFIC_LABELS = {
   supplier_delivery:    'Supplier',
@@ -136,12 +137,11 @@ const STYLE_CELL_ON_TIME = {
 };
 
 /**
- * Builds a styled worksheet matching the exact Google Sheet template.
+ * Builds standard worksheet for Master Register, Visitors, Suppliers, and Casuals.
  */
-function buildStyledRegisterWorksheet(items, registerSubtitle) {
+function buildStyledStandardWorksheet(items, subtitle) {
   const sorted = [...items].sort((a, b) => new Date(a.check_in_time) - new Date(b.check_in_time));
 
-  // Group by date
   const dateGroups = {};
   sorted.forEach((l) => {
     const dStr = formatDateBanner(l.check_in_time);
@@ -154,27 +154,27 @@ function buildStyledRegisterWorksheet(items, registerSubtitle) {
   const rows = [];
   const merges = [];
 
-  // ── ROW 1: Title Banner ──
+  // ROW 1: Title Banner
   const row1 = Array(14).fill(null).map(() => ({ v: '', s: STYLE_TITLE_BANNER }));
   row1[0] = { v: 'VISITOR ACCESS & SECURITY LOG', s: STYLE_TITLE_BANNER };
   rows.push(row1);
   merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 13 } });
 
-  // ── ROW 2: Subheader ──
+  // ROW 2: Subheader
   const row2 = Array(14).fill(null).map(() => ({ v: '', s: {} }));
   row2[0] = { v: 'SELECT / ENTER DATE:', s: STYLE_HEADER_LABEL };
   row2[1] = { v: '', s: STYLE_HEADER_LABEL };
   row2[2] = { v: todayDisplay, s: STYLE_DATE_INPUT_BOX };
   row2[3] = { v: '', s: {} };
-  row2[4] = { v: registerSubtitle || "MASTER REGISTER • Complete monthly security & visitor log.", s: STYLE_SUBTITLE_TEXT };
+  row2[4] = { v: subtitle, s: STYLE_SUBTITLE_TEXT };
   rows.push(row2);
   merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 1 } });
   merges.push({ s: { r: 1, c: 4 }, e: { r: 1, c: 13 } });
 
-  // ── ROW 3: Spacing Row ──
+  // ROW 3: Spacing
   rows.push(Array(14).fill(null).map(() => ({ v: '', s: {} })));
 
-  // ── ROW 4: Column Headers ──
+  // ROW 4: Column Headers
   const headers = [
     'Name',
     'Nationality',
@@ -194,17 +194,16 @@ function buildStyledRegisterWorksheet(items, registerSubtitle) {
   rows.push(headers.map((h) => ({ v: h, s: STYLE_COLUMN_HEADER })));
 
   let currentRowIdx = 4;
-
   const dateKeys = Object.keys(dateGroups);
+
   if (dateKeys.length === 0) {
     const emptyRow = Array(14).fill(null).map(() => ({ v: '', s: STYLE_CELL_CENTER }));
-    emptyRow[0] = { v: 'No visitor records logged for this section', s: STYLE_CELL_CENTER };
+    emptyRow[0] = { v: 'No records logged for this category', s: STYLE_CELL_CENTER };
     rows.push(emptyRow);
     merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 13 } });
     currentRowIdx++;
   } else {
     dateKeys.forEach((dateBanner) => {
-      // Date Separator Banner Row
       const bannerRow = Array(14).fill(null).map(() => ({ v: '', s: STYLE_DATE_BANNER }));
       bannerRow[0] = { v: dateBanner, s: STYLE_DATE_BANNER };
       rows.push(bannerRow);
@@ -212,54 +211,30 @@ function buildStyledRegisterWorksheet(items, registerSubtitle) {
       currentRowIdx++;
 
       dateGroups[dateBanner].forEach((l) => {
-        let dept = l.host_room_or_dept || '—';
-        let visitingPerson = '—';
+        const info = parseLogDetails(l);
 
-        if (dept.includes('(Visiting:')) {
-          const parts = dept.split('(Visiting:');
-          dept = parts[0].trim();
-          visitingPerson = parts[1].replace(')', '').trim();
-        } else if (dept.includes('— Area:')) {
-          const parts = dept.split('— Area:');
-          dept = parts[0].trim();
-          visitingPerson = parts[1].trim();
-        }
-
-        let purpose = l.purpose_of_visit || TRAFFIC_LABELS[l.traffic_type] || 'Standard Entry';
-        if (purpose.includes('(Visiting:')) {
-          purpose = purpose.split('(Visiting:')[0].trim();
-        }
-
-        // ── Calculate Overstay / Extension note ──
         const inTimeMs = new Date(l.check_in_time).getTime();
         const outTimeMs = l.check_out_time ? new Date(l.check_out_time).getTime() : Date.now();
         const durationHours = (outTimeMs - inTimeMs) / 3600000;
         const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2;
         const isOverstay = durationHours > allowedH;
 
-        const isExtended = l.purpose_of_visit && l.purpose_of_visit.includes('[Ext');
-        let extNote = '';
-        if (isExtended) {
-          const m = l.purpose_of_visit.match(/\[Ext([^\]]+)\]/);
-          if (m) extNote = m[1].trim();
-        }
-
         let stayStatusNote = '';
         let stayStyle = STYLE_CELL_ON_TIME;
 
-        if (isExtended) {
-          stayStatusNote = `⏱️ EXTENDED: ${extNote.replace(/\|/g, '•')}`;
+        if (info.isExtended) {
+          stayStatusNote = `⏱️ EXTENDED: ${info.extHours ? `+${info.extHours}h ` : ''}(${info.extReason || 'Approved'})`;
           stayStyle = STYLE_CELL_EXTENDED;
         } else if (isOverstay) {
           const exceededH = (durationHours - allowedH).toFixed(1);
-          stayStatusNote = `⚠️ OVERSTAYED by +${exceededH}h (Stayed: ${durationHours.toFixed(1)}h / Allowed: ${allowedH}h)`;
+          stayStatusNote = `⚠️ OVERSTAYED by +${exceededH}h (${durationHours.toFixed(1)}h / ${allowedH}h allowed)`;
           stayStyle = STYLE_CELL_OVERSTAY;
         } else {
           if (l.status === 'inside') {
             stayStatusNote = `Active Inside (${durationHours.toFixed(1)}h / ${allowedH}h allowed)`;
             stayStyle = STYLE_CELL_ON_TIME;
           } else {
-            stayStatusNote = `Completed (${durationHours.toFixed(1)}h stay • On Time)`;
+            stayStatusNote = `Completed (${durationHours.toFixed(1)}h • On Time)`;
             stayStyle = STYLE_CELL_ON_TIME;
           }
         }
@@ -268,11 +243,11 @@ function buildStyledRegisterWorksheet(items, registerSubtitle) {
           { v: l.full_name || '—',                    s: STYLE_CELL_LEFT },
           { v: l.nationality || '—',                  s: STYLE_CELL_CENTER },
           { v: l.company_name || '—',                 s: STYLE_CELL_LEFT },
-          { v: purpose,                               s: STYLE_CELL_LEFT },
+          { v: info.cleanPurpose,                     s: STYLE_CELL_LEFT },
           { v: l.vehicle_plate || 'Walk-in',          s: STYLE_CELL_CENTER },
           { v: l.mobile_number || '—',                s: STYLE_CELL_CENTER },
-          { v: visitingPerson,                        s: STYLE_CELL_LEFT },
-          { v: dept,                                  s: STYLE_CELL_CENTER },
+          { v: info.visitingPerson || '—',            s: STYLE_CELL_LEFT },
+          { v: info.department,                       s: STYLE_CELL_CENTER },
           { v: l.pass_badge_no || 'CASUAL',           s: STYLE_CELL_PASS },
           { v: formatTimeOnly(l.check_in_time),       s: STYLE_CELL_TIME },
           { v: formatSecurityName(l.logged_by_guard), s: STYLE_CELL_CENTER },
@@ -301,7 +276,7 @@ function buildStyledRegisterWorksheet(items, registerSubtitle) {
     { wch: 22 }, // Name
     { wch: 14 }, // Nationality
     { wch: 24 }, // Company Name
-    { wch: 26 }, // Purpose of Visit
+    { wch: 24 }, // Purpose of Visit
     { wch: 15 }, // Vehicle No.
     { wch: 18 }, // Mobile Number
     { wch: 20 }, // Visiting Person
@@ -315,17 +290,169 @@ function buildStyledRegisterWorksheet(items, registerSubtitle) {
   ];
 
   ws['!merges'] = merges;
+  ws['!views'] = [{ state: 'frozen', ySplit: 4, topLeftCell: 'A5', activeCell: 'A5' }];
+  return ws;
+}
 
-  // Freeze top 4 header rows
-  ws['!views'] = [
-    {
-      state: 'frozen',
-      ySplit: 4,
-      topLeftCell: 'A5',
-      activeCell: 'A5',
-    },
+/**
+ * Builds specialized Contractors worksheet with:
+ * Columns: Name, Nationality, Company Name, Type of Work, PTW Number, Area of Work, Vehicle No., Mobile Number, Department, Pass Number, Time In, Security In, Time Out, Security Out, Stay Duration & Overstay Status.
+ */
+function buildStyledContractorsWorksheet(items, subtitle) {
+  const sorted = [...items].sort((a, b) => new Date(a.check_in_time) - new Date(b.check_in_time));
+
+  const dateGroups = {};
+  sorted.forEach((l) => {
+    const dStr = formatDateBanner(l.check_in_time);
+    if (!dateGroups[dStr]) dateGroups[dStr] = [];
+    dateGroups[dStr].push(l);
+  });
+
+  const todayDisplay = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  const rows = [];
+  const merges = [];
+
+  // ROW 1: Title Banner
+  const row1 = Array(15).fill(null).map(() => ({ v: '', s: STYLE_TITLE_BANNER }));
+  row1[0] = { v: 'VISITOR ACCESS & SECURITY LOG — CONTRACTORS REGISTER', s: STYLE_TITLE_BANNER };
+  rows.push(row1);
+  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 14 } });
+
+  // ROW 2: Subheader
+  const row2 = Array(15).fill(null).map(() => ({ v: '', s: {} }));
+  row2[0] = { v: 'SELECT / ENTER DATE:', s: STYLE_HEADER_LABEL };
+  row2[1] = { v: '', s: STYLE_HEADER_LABEL };
+  row2[2] = { v: todayDisplay, s: STYLE_DATE_INPUT_BOX };
+  row2[3] = { v: '', s: {} };
+  row2[4] = { v: subtitle, s: STYLE_SUBTITLE_TEXT };
+  rows.push(row2);
+  merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 1 } });
+  merges.push({ s: { r: 1, c: 4 }, e: { r: 1, c: 14 } });
+
+  // ROW 3: Spacing
+  rows.push(Array(15).fill(null).map(() => ({ v: '', s: {} })));
+
+  // ROW 4: Column Headers (Exact structure requested by user)
+  const headers = [
+    'Name',
+    'Nationality',
+    'Company Name',
+    'Type of Work',
+    'PTW Number',
+    'Area of Work',
+    'Vehicle No.',
+    'Mobile Number',
+    'Department',
+    'Pass Number',
+    'Time In',
+    'Security In',
+    'Time Out',
+    'Security Out',
+    'Stay Duration & Overstay Status',
+  ];
+  rows.push(headers.map((h) => ({ v: h, s: STYLE_COLUMN_HEADER })));
+
+  let currentRowIdx = 4;
+  const dateKeys = Object.keys(dateGroups);
+
+  if (dateKeys.length === 0) {
+    const emptyRow = Array(15).fill(null).map(() => ({ v: '', s: STYLE_CELL_CENTER }));
+    emptyRow[0] = { v: 'No contractor records logged', s: STYLE_CELL_CENTER };
+    rows.push(emptyRow);
+    merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 14 } });
+    currentRowIdx++;
+  } else {
+    dateKeys.forEach((dateBanner) => {
+      const bannerRow = Array(15).fill(null).map(() => ({ v: '', s: STYLE_DATE_BANNER }));
+      bannerRow[0] = { v: dateBanner, s: STYLE_DATE_BANNER };
+      rows.push(bannerRow);
+      merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 14 } });
+      currentRowIdx++;
+
+      dateGroups[dateBanner].forEach((l) => {
+        const info = parseLogDetails(l);
+
+        const inTimeMs = new Date(l.check_in_time).getTime();
+        const outTimeMs = l.check_out_time ? new Date(l.check_out_time).getTime() : Date.now();
+        const durationHours = (outTimeMs - inTimeMs) / 3600000;
+        const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 4;
+        const isOverstay = durationHours > allowedH;
+
+        let stayStatusNote = '';
+        let stayStyle = STYLE_CELL_ON_TIME;
+
+        if (info.isExtended) {
+          stayStatusNote = `⏱️ EXTENDED: ${info.extHours ? `+${info.extHours}h ` : ''}(${info.extReason || 'Approved'})`;
+          stayStyle = STYLE_CELL_EXTENDED;
+        } else if (isOverstay) {
+          const exceededH = (durationHours - allowedH).toFixed(1);
+          stayStatusNote = `⚠️ OVERSTAYED by +${exceededH}h (${durationHours.toFixed(1)}h / ${allowedH}h allowed)`;
+          stayStyle = STYLE_CELL_OVERSTAY;
+        } else {
+          if (l.status === 'inside') {
+            stayStatusNote = `Active Inside (${durationHours.toFixed(1)}h / ${allowedH}h allowed)`;
+            stayStyle = STYLE_CELL_ON_TIME;
+          } else {
+            stayStatusNote = `Completed (${durationHours.toFixed(1)}h • On Time)`;
+            stayStyle = STYLE_CELL_ON_TIME;
+          }
+        }
+
+        const dataRow = [
+          { v: l.full_name || '—',                    s: STYLE_CELL_LEFT },
+          { v: l.nationality || '—',                  s: STYLE_CELL_CENTER },
+          { v: l.company_name || '—',                 s: STYLE_CELL_LEFT },
+          { v: info.workKind || 'General Work',       s: STYLE_CELL_LEFT },
+          { v: info.workPermit || '—',                s: STYLE_CELL_CENTER },
+          { v: info.workArea || '—',                  s: STYLE_CELL_LEFT },
+          { v: l.vehicle_plate || 'Walk-in',          s: STYLE_CELL_CENTER },
+          { v: l.mobile_number || '—',                s: STYLE_CELL_CENTER },
+          { v: info.department,                       s: STYLE_CELL_CENTER },
+          { v: l.pass_badge_no || 'CONTRACTOR',       s: STYLE_CELL_PASS },
+          { v: formatTimeOnly(l.check_in_time),       s: STYLE_CELL_TIME },
+          { v: formatSecurityName(l.logged_by_guard), s: STYLE_CELL_CENTER },
+          { v: formatTimeOnly(l.check_out_time),      s: l.check_out_time ? STYLE_CELL_TIME : STYLE_CELL_CENTER },
+          { v: formatSecurityName(l.checkout_by_guard), s: STYLE_CELL_CENTER },
+          { v: stayStatusNote,                        s: stayStyle },
+        ];
+
+        rows.push(dataRow);
+        currentRowIdx++;
+      });
+    });
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => c.v)));
+
+  rows.forEach((rowObj, rIdx) => {
+    rowObj.forEach((cellObj, cIdx) => {
+      const cellRef = XLSX.utils.encode_cell({ r: rIdx, c: cIdx });
+      if (!ws[cellRef]) ws[cellRef] = { v: cellObj.v, t: typeof cellObj.v === 'number' ? 'n' : 's' };
+      ws[cellRef].s = cellObj.s;
+    });
+  });
+
+  ws['!cols'] = [
+    { wch: 22 }, // Name
+    { wch: 14 }, // Nationality
+    { wch: 24 }, // Company Name
+    { wch: 20 }, // Type of Work
+    { wch: 15 }, // PTW Number
+    { wch: 20 }, // Area of Work
+    { wch: 15 }, // Vehicle No.
+    { wch: 18 }, // Mobile Number
+    { wch: 22 }, // Department
+    { wch: 14 }, // Pass Number
+    { wch: 12 }, // Time In
+    { wch: 16 }, // Security In
+    { wch: 12 }, // Time Out
+    { wch: 16 }, // Security Out
+    { wch: 42 }, // Stay Duration & Overstay Status
   ];
 
+  ws['!merges'] = merges;
+  ws['!views'] = [{ state: 'frozen', ySplit: 4, topLeftCell: 'A5', activeCell: 'A5' }];
   return ws;
 }
 
@@ -420,12 +547,10 @@ function buildStyledSummaryWorksheet(logs) {
     ]);
 
   const rows = [
-    // Banner
     Array(7).fill(null).map((_, i) => ({ v: i === 0 ? 'HOTEL SECURITY & VISITOR ACCESS — EXECUTIVE SUMMARY REPORT' : '', s: STYLE_TITLE_BANNER })),
     Array(7).fill(null).map((_, i) => ({ v: i === 0 ? `Report Generated: ${new Date().toLocaleString()}` : '', s: STYLE_SUBTITLE_TEXT })),
     Array(7).fill(null).map(() => ({ v: '', s: {} })),
 
-    // KPIs Header
     [
       { v: 'KEY AUDIT METRICS', s: STYLE_COLUMN_HEADER },
       { v: 'VALUE', s: STYLE_COLUMN_HEADER },
@@ -438,7 +563,6 @@ function buildStyledSummaryWorksheet(logs) {
     [{ v: 'Total Manager Time Extensions Granted', s: STYLE_CELL_LEFT }, { v: extensionsCount, s: extensionsCount > 0 ? STYLE_CELL_EXTENDED : STYLE_CELL_CENTER }, { v: '', s: {} }, { v: '', s: {} }, { v: '', s: {} }, { v: '', s: {} }, { v: '', s: {} }],
     Array(7).fill(null).map(() => ({ v: '', s: {} })),
 
-    // Category Breakdown
     [
       { v: 'CATEGORY BREAKDOWN', s: STYLE_COLUMN_HEADER },
       { v: 'TOTAL ENTRIES', s: STYLE_COLUMN_HEADER },
@@ -460,7 +584,6 @@ function buildStyledSummaryWorksheet(logs) {
     ],
     Array(7).fill(null).map(() => ({ v: '', s: {} })),
 
-    // Department Breakdown
     [
       { v: 'DEPARTMENT DISTRIBUTION', s: STYLE_COLUMN_HEADER },
       { v: 'TOTAL VISITS', s: STYLE_COLUMN_HEADER },
@@ -470,7 +593,6 @@ function buildStyledSummaryWorksheet(logs) {
     ...deptRows,
     Array(7).fill(null).map(() => ({ v: '', s: {} })),
 
-    // Security Guards Activity
     [
       { v: 'SECURITY OFFICER', s: STYLE_COLUMN_HEADER },
       { v: 'CHECK-INS LOGGED', s: STYLE_COLUMN_HEADER },
@@ -506,25 +628,16 @@ function buildStyledSummaryWorksheet(logs) {
     { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } },
   ];
 
-  ws['!views'] = [
-    {
-      state: 'frozen',
-      ySplit: 3,
-      topLeftCell: 'A4',
-      activeCell: 'A4',
-    },
-  ];
-
+  ws['!views'] = [{ state: 'frozen', ySplit: 3, topLeftCell: 'A4', activeCell: 'A4' }];
   return ws;
 }
 
 /**
- * Fetches the entire master logs database and generates the complete workbook.
+ * Generates and downloads the complete multi-sheet styled executive workbook.
  */
 export async function generateProfessionalExcelReport(initialLogs, notify) {
   if (notify) notify('⏳ Generating complete master log report…', 'info');
 
-  // Always fetch full master database so no logs from other shifts/dates are missed!
   let allMasterLogs = initialLogs || [];
   try {
     const { data: dbLogs, error } = await supabase
@@ -541,27 +654,33 @@ export async function generateProfessionalExcelReport(initialLogs, notify) {
 
   const wb = XLSX.utils.book_new();
 
-  // 1. Executive Summary Tab (First Sheet)
+  // 1. Executive Summary Tab
   const wsSummary = buildStyledSummaryWorksheet(allMasterLogs);
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
   // 2. Master Register (Full Database)
-  const wsMaster = buildStyledRegisterWorksheet(allMasterLogs, "MASTER REGISTER • Complete chronological log of all visitor & security traffic.");
+  const wsMaster = buildStyledStandardWorksheet(allMasterLogs, "MASTER REGISTER • Complete chronological log of all visitor & security traffic.");
   XLSX.utils.book_append_sheet(wb, wsMaster, 'Master Register');
 
-  // 3. Category Tabs (NO Daily View as requested)
-  const categories = [
-    { key: 'hotel_guest_visitor',  title: 'Visitors',    subtitle: "VISITORS REGISTER • Guest, business meetings, and official visitors." },
-    { key: 'contractor_engineer',  title: 'Contractors', subtitle: "CONTRACTORS REGISTER • External contractors, technicians & PTW works." },
-    { key: 'supplier_delivery',    title: 'Suppliers',   subtitle: "SUPPLIERS REGISTER • Delivery trucks, materials & vendors." },
-    { key: 'casual_staff_banquet', title: 'Casuals',     subtitle: "CASUAL STAFF REGISTER • F&B, Housekeeping, Stewarding & Entertainment." },
-  ];
+  // 3. Visitors Tab
+  const visitorItems = allMasterLogs.filter((l) => l.traffic_type === 'hotel_guest_visitor');
+  const wsVisitors = buildStyledStandardWorksheet(visitorItems, "VISITORS REGISTER • Guest, business meetings, and official visitors.");
+  XLSX.utils.book_append_sheet(wb, wsVisitors, 'Visitors');
 
-  categories.forEach(({ key, title, subtitle }) => {
-    const items = allMasterLogs.filter((l) => l.traffic_type === key);
-    const ws = buildStyledRegisterWorksheet(items, subtitle);
-    XLSX.utils.book_append_sheet(wb, ws, title);
-  });
+  // 4. Contractors Tab (Specialized columns: Type of Work, PTW Number, Area of Work)
+  const contractorItems = allMasterLogs.filter((l) => l.traffic_type === 'contractor_engineer');
+  const wsContractors = buildStyledContractorsWorksheet(contractorItems, "CONTRACTORS REGISTER • External contractors, technicians & PTW works.");
+  XLSX.utils.book_append_sheet(wb, wsContractors, 'Contractors');
+
+  // 5. Suppliers Tab (Purpose of visit: Delivery, Meeting)
+  const supplierItems = allMasterLogs.filter((l) => l.traffic_type === 'supplier_delivery');
+  const wsSuppliers = buildStyledStandardWorksheet(supplierItems, "SUPPLIERS REGISTER • Delivery trucks, materials & vendors.");
+  XLSX.utils.book_append_sheet(wb, wsSuppliers, 'Suppliers');
+
+  // 6. Casuals Tab
+  const casualItems = allMasterLogs.filter((l) => l.traffic_type === 'casual_staff_banquet');
+  const wsCasuals = buildStyledStandardWorksheet(casualItems, "CASUAL STAFF REGISTER • F&B, Housekeeping, Stewarding & Entertainment.");
+  XLSX.utils.book_append_sheet(wb, wsCasuals, 'Casuals');
 
   const filename = `Visitor-Access-Security-Log-${new Date().toISOString().slice(0, 10)}.xlsx`;
   XLSX.writeFile(wb, filename);
