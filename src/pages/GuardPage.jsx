@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
-import * as XLSX from 'xlsx';
 import { generateProfessionalExcelReport } from '../utils/excelExporter';
 import { parseLogDetails } from '../utils/logFormatter';
 import {

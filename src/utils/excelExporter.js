@@ -2,13 +2,6 @@ import XLSX from 'xlsx-js-style';
 import { supabase } from '../supabaseClient';
 import { parseLogDetails } from './logFormatter';
 
-const TRAFFIC_LABELS = {
-  supplier_delivery:    'Supplier',
-  contractor_engineer:  'Contractor',
-  casual_staff_banquet: 'Casual',
-  hotel_guest_visitor:  'Visitor',
-};
-
 const formatTimeOnly = (d) => {
   if (!d) return '—';
   try {
@@ -236,8 +229,8 @@ function buildStyledStandardWorksheet(items, subtitle) {
         const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2;
         const isOverstay = durationHours > allowedH;
 
-        let stayStatusNote = '';
-        let stayStyle = STYLE_CELL_ON_TIME;
+        let stayStatusNote;
+        let stayStyle;
 
         if (info.isExtended) {
           stayStatusNote = `⏱️ EXTENDED: ${info.extHours ? `+${info.extHours}h ` : ''}(${info.extReason || 'Approved'})`;
@@ -314,8 +307,7 @@ function buildStyledStandardWorksheet(items, subtitle) {
 }
 
 /**
- * Builds specialized Contractors worksheet with:
- * Columns: Name, Nationality, Company Name, Type of Work, PTW Number, Area of Work, Allowed Duration of Work, Vehicle No., Mobile Number, Department, Pass Number, Time In, Security In, Time Out, Security Out, Stay Duration & Overstay Status.
+ * Builds specialized Contractors worksheet.
  */
 function buildStyledContractorsWorksheet(items, subtitle) {
   const sorted = [...items].sort((a, b) => new Date(a.check_in_time) - new Date(b.check_in_time));
@@ -399,8 +391,8 @@ function buildStyledContractorsWorksheet(items, subtitle) {
         const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 4;
         const isOverstay = durationHours > allowedH;
 
-        let stayStatusNote = '';
-        let stayStyle = STYLE_CELL_ON_TIME;
+        let stayStatusNote;
+        let stayStyle;
 
         if (info.isExtended) {
           stayStatusNote = `⏱️ EXTENDED: ${info.extHours ? `+${info.extHours}h ` : ''}(${info.extReason || 'Approved'})`;
