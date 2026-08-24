@@ -345,10 +345,11 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [submitting,    setSubmitting]    = useState(false);
 
   /* ── Data state ── */
-  const [logs,           setLogs]           = useState([]);
-  const [availablePasses,setAvailablePasses] = useState([]);
-  const [passesLoading,  setPassesLoading]   = useState(false);
-  const [noPasses,       setNoPasses]        = useState(false);
+  const [logs,               setLogs]               = useState([]);
+  const [allPassesList,      setAllPassesList]      = useState([]);
+  const [activePassHolderMap,setActivePassHolderMap]= useState({});
+  const [passesLoading,      setPassesLoading]      = useState(false);
+  const [noPasses,           setNoPasses]           = useState(false);
 
   /* ── Scanner state ── */
   const [scannerOpen,    setScannerOpen]    = useState(false);
@@ -396,12 +397,33 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
   const fetchPasses = useCallback(async (passType) => {
     setPassesLoading(true);
-    const { data } = await supabase.from('passes')
-      .select('id,pass_number,pass_type,nfc_uid')
-      .eq('pass_type', passType).eq('status', 'available').order('pass_number');
-    setAvailablePasses(data || []);
-    setNoPasses((data || []).length === 0);
-    setPassesLoading(false);
+    try {
+      // 1. Fetch all passes configured for this category
+      const { data: passesData } = await supabase.from('passes')
+        .select('id,pass_number,pass_type,nfc_uid,status')
+        .eq('pass_type', passType)
+        .order('pass_number');
+
+      // 2. Fetch all currently active visitors holding passes across the hotel
+      const { data: activeLogs } = await supabase.from('hotel_security_logs')
+        .select('pass_badge_no, full_name, traffic_type')
+        .eq('status', 'inside');
+
+      const holderMap = {};
+      (activeLogs || []).forEach((l) => {
+        if (l.pass_badge_no && l.pass_badge_no !== 'CASUAL') {
+          holderMap[l.pass_badge_no] = l.full_name;
+        }
+      });
+
+      setAllPassesList(passesData || []);
+      setActivePassHolderMap(holderMap);
+      setNoPasses((passesData || []).length === 0);
+    } catch (err) {
+      console.error('Error fetching passes:', err);
+    } finally {
+      setPassesLoading(false);
+    }
   }, []);
 
   /* ── Beep ── */
@@ -706,6 +728,21 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     }
     if (isIdExpired) return notify('⛔ ACCESS DENIED — Document is expired', 'error');
 
+    // ── HARD PREVENT DOUBLE PASS ISSUANCE ──
+    if (requiresPass && selectedPass) {
+      const { data: existingActive } = await supabase.from('hotel_security_logs')
+        .select('full_name, pass_badge_no')
+        .eq('pass_badge_no', selectedPass)
+        .eq('status', 'inside')
+        .maybeSingle();
+
+      if (existingActive) {
+        beep(false);
+        fetchPasses(currentPassType);
+        return notify(`⛔ Pass ${selectedPass} is ALREADY ISSUED to ${existingActive.full_name} (Currently on property). Cannot re-assign!`, 'error');
+      }
+    }
+
     setSubmitting(true);
 
     let effectiveDept = baseDept;
@@ -798,9 +835,11 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     return () => clearInterval(timer);
   }, [insideLogs, notify, beep]);
 
-  // 2. Realtime listener & initial log fetch
+  // 2. Realtime listener for logs and passes
   useEffect(() => {
     fetchLogs();
+    if (requiresPass) fetchPasses(currentPassType);
+
     const channel = supabase.channel('guard-terminal-logs')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'hotel_security_logs' }, (payload) => {
         if (payload.eventType === 'UPDATE' && payload.new && payload.old) {
@@ -811,10 +850,15 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           }
         }
         fetchLogs();
+        if (requiresPass) fetchPasses(currentPassType);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, () => {
+        if (requiresPass) fetchPasses(currentPassType);
       })
       .subscribe();
+
     return () => supabase.removeChannel(channel);
-  }, [shift, fetchLogs, beep, notify]);
+  }, [shift, fetchLogs, fetchPasses, requiresPass, currentPassType, beep, notify]);
 
   // 3. Traffic type configuration sync
   useEffect(() => {
@@ -1269,17 +1313,53 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                     No {PASS_PREFIX[currentPassType]}-passes available. Create passes in Manager Portal → Passes.
                   </div>
                 ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {availablePasses.map((p) => (
-                      <button key={p.id} type="button" onClick={() => setSelectedPass(p.pass_number)}
-                        className={`font-mono text-xs font-bold px-3 py-2 rounded-lg border transition-all ${
-                          selectedPass === p.pass_number
-                            ? 'border-indigo-500 bg-indigo-600/30 text-indigo-300 ring-1 ring-indigo-500 shadow-lg shadow-indigo-900/30'
-                            : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
-                        }`}>
-                        {p.pass_number} {p.nfc_uid && <Wifi className="inline h-2.5 w-2.5 ml-0.5 text-indigo-400" />}
-                      </button>
-                    ))}
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      {allPassesList.map((p) => {
+                        const holderName = activePassHolderMap[p.pass_number] || (p.status === 'in_use' ? 'Active Visitor' : null);
+                        const isInUse = Boolean(holderName);
+
+                        if (isInUse) {
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                beep(false);
+                                notify(`⛔ Pass ${p.pass_number} is currently issued to ${holderName}. Cannot select!`, 'error');
+                              }}
+                              className="font-mono text-xs font-bold px-3 py-2 rounded-lg border border-red-500/50 bg-red-950/40 text-red-300 flex items-center gap-1.5 shadow-sm transition hover:bg-red-950/60"
+                              title={`In Use by: ${holderName}`}
+                            >
+                              <span>{p.pass_number}</span>
+                              <span className="text-[10px] font-semibold bg-red-600/30 border border-red-500/40 px-1 py-0.2 rounded text-red-200">
+                                🔒 IN USE
+                              </span>
+                            </button>
+                          );
+                        }
+
+                        const isSelected = selectedPass === p.pass_number;
+
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setSelectedPass(p.pass_number)}
+                            className={`font-mono text-xs font-bold px-3 py-2 rounded-lg border transition-all ${
+                              isSelected
+                                ? 'border-indigo-500 bg-indigo-600/30 text-indigo-300 ring-2 ring-indigo-500 shadow-lg shadow-indigo-900/40'
+                                : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:border-indigo-500/50 hover:text-white'
+                            }`}
+                          >
+                            {p.pass_number} {p.nfc_uid && <Wifi className="inline h-2.5 w-2.5 ml-0.5 text-indigo-400" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      🟢 Available passes in blue/slate • 🔴 <span className="text-red-400 font-medium">Red passes</span> are currently issued and locked from selection.
+                    </p>
                   </div>
                 )}
                 <button type="button" onClick={startNfcScan}
