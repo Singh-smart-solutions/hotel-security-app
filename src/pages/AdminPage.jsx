@@ -542,11 +542,20 @@ function LogTable({ notify }) {
     let q = supabase.from('hotel_security_logs').select('*').order('check_in_time', { ascending: false }).limit(500);
     if (status !== 'all') q = q.eq('status', status);
     if (ttype !== 'all')  q = q.eq('traffic_type', ttype);
+
+    if (timeRange === '12h' && !dateFrom && !dateTo) {
+      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      q = q.or(`check_in_time.gte.${twelveHoursAgo},status.eq.inside`);
+    } else if (timeRange === '24h' && !dateFrom && !dateTo) {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      q = q.or(`check_in_time.gte.${twentyFourHoursAgo},status.eq.inside`);
+    }
+
     if (dateFrom) q = q.gte('check_in_time', dateFrom);
     if (dateTo)   q = q.lte('check_in_time', dateTo + 'T23:59:59');
     const { data } = await q;
     setLogs(data || []); setLoading(false);
-  }, [status, ttype, dateFrom, dateTo]);
+  }, [status, ttype, timeRange, dateFrom, dateTo]);
 
   useEffect(() => {
     fetchLogs();

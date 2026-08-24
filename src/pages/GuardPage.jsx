@@ -390,10 +390,13 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
   /* ── Data fetchers ── */
   const fetchLogs = useCallback(async () => {
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
     const { data } = await supabase.from('hotel_security_logs')
-      .select('*').eq('shift_id', shift.id).order('check_in_time', { ascending: false });
+      .select('*')
+      .or(`check_in_time.gte.${twelveHoursAgo},status.eq.inside`)
+      .order('check_in_time', { ascending: false });
     setLogs(data || []);
-  }, [shift.id]);
+  }, []);
 
   const fetchPasses = useCallback(async (passType) => {
     setPassesLoading(true);
@@ -604,18 +607,26 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     }
   }, [applyExtractedFields, beep, closeDocumentScanner, notify]);
 
-  /* ── Check-out ── */
-  const handleCheckOut = useCallback(async (id, passNum) => {
+  /* ── Check-out (Strict Overstay Guard Lock) ── */
+  const handleCheckOut = useCallback(async (id, passNum, isOverstayed = false, extGranted = false) => {
+    if (isOverstayed && !extGranted) {
+      beep(false);
+      if ('vibrate' in navigator) navigator.vibrate([80, 60, 80]);
+      return notify('⛔ OVERSTAY LOCK: Visitor has exceeded allowed time. Manager must grant extension in Manager Portal before check-out!', 'error');
+    }
+
     const { error } = await supabase.from('hotel_security_logs').update({
       status:          'checked_out',
       check_out_time:  new Date().toISOString(),
       checkout_by_guard: guard.name,
     }).eq('id', id);
     if (error) return notify(error.message, 'error');
-    if (passNum) await supabase.from('passes').update({ status: 'available' }).eq('pass_number', passNum);
+    if (passNum && passNum !== 'CASUAL') {
+      await supabase.from('passes').update({ status: 'available' }).eq('pass_number', passNum);
+    }
     beep(true);
     if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
-    notify(`Pass ${passNum} checked out`, 'success');
+    notify(`✅ Pass ${passNum || 'CASUAL'} checked out successfully`, 'success');
     fetchLogs(); fetchPasses(currentPassType);
   }, [guard.name, notify, beep, fetchLogs, fetchPasses, currentPassType]);
 
@@ -679,9 +690,19 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
             .eq('status', 'inside')
             .maybeSingle();
           if (logs) {
-            await handleCheckOut(logs.id, pass.pass_number);
-            notify(`✅ ${logs.full_name} auto checked out — Pass ${pass.pass_number} returned`, 'success');
-            if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
+            const checkInMs = new Date(logs.check_in_time).getTime();
+            const durHours = (Date.now() - checkInMs) / 3600000;
+            const ah = Number(logs.allowed_hours) > 0 ? Number(logs.allowed_hours) : 2;
+            const isOverstay = durHours > ah;
+            const extGranted = logs.purpose_of_visit && logs.purpose_of_visit.includes('[Ext');
+
+            if (isOverstay && !extGranted) {
+              beep(false);
+              if ('vibrate' in navigator) navigator.vibrate([80, 60, 80]);
+              return notify(`⛔ OVERSTAY LOCK: ${logs.full_name} has exceeded allowed time. Manager must approve extension in Manager Portal before checkout!`, 'error');
+            }
+
+            await handleCheckOut(logs.id, pass.pass_number, isOverstay, extGranted);
           } else {
             notify(`Pass ${pass.pass_number} in use but not in this shift. Check manually.`, 'info');
           }
@@ -1546,14 +1567,30 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                       )}
                     </div>
 
-                    {/* Check-out action */}
-                    <button
-                      type="button"
-                      onClick={() => handleCheckOut(l.id, l.pass_badge_no)}
-                      className="flex-shrink-0 mt-0.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-600/30 transition shadow-sm"
-                    >
-                      Check-Out
-                    </button>
+                    {/* Check-out action with Overstay Lock */}
+                    {isOverstay && !extGranted ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          beep(false);
+                          if ('vibrate' in navigator) navigator.vibrate([80, 60, 80]);
+                          notify(`⛔ OVERSTAY LOCK: ${l.full_name} exceeded allowed time. Manager must approve extension in Manager Portal before check-out.`, 'error');
+                        }}
+                        className="flex-shrink-0 mt-0.5 rounded-lg bg-red-950/80 border border-red-500/60 px-3 py-1.5 text-xs font-bold text-red-300 hover:bg-red-900/80 transition shadow-sm flex items-center gap-1 cursor-pointer animate-pulse"
+                        title="Manager extension required before check-out"
+                      >
+                        <AlertTriangle className="h-3 w-3 text-red-400" />
+                        <span>🔒 Overstay Lock</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleCheckOut(l.id, l.pass_badge_no, isOverstay, extGranted)}
+                        className="flex-shrink-0 mt-0.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-600/30 transition shadow-sm"
+                      >
+                        Check-Out
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -1569,7 +1606,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                 📋 Gate Security Logs & Master Register
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Total {logs.length} logged entries recorded at this terminal
+                Showing last 12 hours active shift data & on-property visitors ({logs.length} entries) • Auto-refreshes live
               </p>
             </div>
 
