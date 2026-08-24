@@ -38,6 +38,14 @@ const formatSecurityName = (name) => {
   return `SEC. ${clean}`;
 };
 
+const formatAllowedTime = (ah) => {
+  const h = Number(ah) > 0 ? Number(ah) : 2;
+  if (h < 1) {
+    return `${Math.round(h * 60)} mins`;
+  }
+  return `${h} hr${h === 1 ? '' : 's'}`;
+};
+
 /* ── STYLES DEFINITION ────────────────────────────────────────── */
 const BORDER_THIN = {
   top:    { style: 'thin', color: { rgb: 'D9D9D9' } },
@@ -103,6 +111,13 @@ const STYLE_CELL_CENTER = {
   border: BORDER_THIN,
 };
 
+const STYLE_CELL_ALLOWED = {
+  font: { name: 'Calibri', sz: 9.5, bold: true, color: { rgb: '1E40AF' } },
+  fill: { fgColor: { rgb: 'EFF6FF' } }, // Soft Blue
+  alignment: { horizontal: 'center', vertical: 'center' },
+  border: BORDER_THIN,
+};
+
 const STYLE_CELL_PASS = {
   font: { name: 'Consolas', sz: 9.5, bold: true, color: { rgb: '1F3864' } },
   alignment: { horizontal: 'center', vertical: 'center' },
@@ -138,6 +153,7 @@ const STYLE_CELL_ON_TIME = {
 
 /**
  * Builds standard worksheet for Master Register, Visitors, Suppliers, and Casuals.
+ * Includes "Allowed Time" column.
  */
 function buildStyledStandardWorksheet(items, subtitle) {
   const sorted = [...items].sort((a, b) => new Date(a.check_in_time) - new Date(b.check_in_time));
@@ -155,13 +171,13 @@ function buildStyledStandardWorksheet(items, subtitle) {
   const merges = [];
 
   // ROW 1: Title Banner
-  const row1 = Array(14).fill(null).map(() => ({ v: '', s: STYLE_TITLE_BANNER }));
+  const row1 = Array(15).fill(null).map(() => ({ v: '', s: STYLE_TITLE_BANNER }));
   row1[0] = { v: 'VISITOR ACCESS & SECURITY LOG', s: STYLE_TITLE_BANNER };
   rows.push(row1);
-  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 13 } });
+  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 14 } });
 
   // ROW 2: Subheader
-  const row2 = Array(14).fill(null).map(() => ({ v: '', s: {} }));
+  const row2 = Array(15).fill(null).map(() => ({ v: '', s: {} }));
   row2[0] = { v: 'SELECT / ENTER DATE:', s: STYLE_HEADER_LABEL };
   row2[1] = { v: '', s: STYLE_HEADER_LABEL };
   row2[2] = { v: todayDisplay, s: STYLE_DATE_INPUT_BOX };
@@ -169,17 +185,18 @@ function buildStyledStandardWorksheet(items, subtitle) {
   row2[4] = { v: subtitle, s: STYLE_SUBTITLE_TEXT };
   rows.push(row2);
   merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 1 } });
-  merges.push({ s: { r: 1, c: 4 }, e: { r: 1, c: 13 } });
+  merges.push({ s: { r: 1, c: 4 }, e: { r: 1, c: 14 } });
 
   // ROW 3: Spacing
-  rows.push(Array(14).fill(null).map(() => ({ v: '', s: {} })));
+  rows.push(Array(15).fill(null).map(() => ({ v: '', s: {} })));
 
-  // ROW 4: Column Headers
+  // ROW 4: Column Headers (with Allowed Time)
   const headers = [
     'Name',
     'Nationality',
     'Company Name',
     'Purpose of Visit',
+    'Allowed Time',
     'Vehicle No.',
     'Mobile Number',
     'Visiting Person',
@@ -197,17 +214,17 @@ function buildStyledStandardWorksheet(items, subtitle) {
   const dateKeys = Object.keys(dateGroups);
 
   if (dateKeys.length === 0) {
-    const emptyRow = Array(14).fill(null).map(() => ({ v: '', s: STYLE_CELL_CENTER }));
+    const emptyRow = Array(15).fill(null).map(() => ({ v: '', s: STYLE_CELL_CENTER }));
     emptyRow[0] = { v: 'No records logged for this category', s: STYLE_CELL_CENTER };
     rows.push(emptyRow);
-    merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 13 } });
+    merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 14 } });
     currentRowIdx++;
   } else {
     dateKeys.forEach((dateBanner) => {
-      const bannerRow = Array(14).fill(null).map(() => ({ v: '', s: STYLE_DATE_BANNER }));
+      const bannerRow = Array(15).fill(null).map(() => ({ v: '', s: STYLE_DATE_BANNER }));
       bannerRow[0] = { v: dateBanner, s: STYLE_DATE_BANNER };
       rows.push(bannerRow);
-      merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 13 } });
+      merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 14 } });
       currentRowIdx++;
 
       dateGroups[dateBanner].forEach((l) => {
@@ -244,6 +261,7 @@ function buildStyledStandardWorksheet(items, subtitle) {
           { v: l.nationality || '—',                  s: STYLE_CELL_CENTER },
           { v: l.company_name || '—',                 s: STYLE_CELL_LEFT },
           { v: info.cleanPurpose,                     s: STYLE_CELL_LEFT },
+          { v: formatAllowedTime(l.allowed_hours),    s: STYLE_CELL_ALLOWED },
           { v: l.vehicle_plate || 'Walk-in',          s: STYLE_CELL_CENTER },
           { v: l.mobile_number || '—',                s: STYLE_CELL_CENTER },
           { v: info.visitingPerson || '—',            s: STYLE_CELL_LEFT },
@@ -276,7 +294,8 @@ function buildStyledStandardWorksheet(items, subtitle) {
     { wch: 22 }, // Name
     { wch: 14 }, // Nationality
     { wch: 24 }, // Company Name
-    { wch: 24 }, // Purpose of Visit
+    { wch: 22 }, // Purpose of Visit
+    { wch: 15 }, // Allowed Time
     { wch: 15 }, // Vehicle No.
     { wch: 18 }, // Mobile Number
     { wch: 20 }, // Visiting Person
@@ -296,7 +315,7 @@ function buildStyledStandardWorksheet(items, subtitle) {
 
 /**
  * Builds specialized Contractors worksheet with:
- * Columns: Name, Nationality, Company Name, Type of Work, PTW Number, Area of Work, Vehicle No., Mobile Number, Department, Pass Number, Time In, Security In, Time Out, Security Out, Stay Duration & Overstay Status.
+ * Columns: Name, Nationality, Company Name, Type of Work, PTW Number, Area of Work, Allowed Duration of Work, Vehicle No., Mobile Number, Department, Pass Number, Time In, Security In, Time Out, Security Out, Stay Duration & Overstay Status.
  */
 function buildStyledContractorsWorksheet(items, subtitle) {
   const sorted = [...items].sort((a, b) => new Date(a.check_in_time) - new Date(b.check_in_time));
@@ -314,13 +333,13 @@ function buildStyledContractorsWorksheet(items, subtitle) {
   const merges = [];
 
   // ROW 1: Title Banner
-  const row1 = Array(15).fill(null).map(() => ({ v: '', s: STYLE_TITLE_BANNER }));
+  const row1 = Array(16).fill(null).map(() => ({ v: '', s: STYLE_TITLE_BANNER }));
   row1[0] = { v: 'VISITOR ACCESS & SECURITY LOG — CONTRACTORS REGISTER', s: STYLE_TITLE_BANNER };
   rows.push(row1);
-  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 14 } });
+  merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: 15 } });
 
   // ROW 2: Subheader
-  const row2 = Array(15).fill(null).map(() => ({ v: '', s: {} }));
+  const row2 = Array(16).fill(null).map(() => ({ v: '', s: {} }));
   row2[0] = { v: 'SELECT / ENTER DATE:', s: STYLE_HEADER_LABEL };
   row2[1] = { v: '', s: STYLE_HEADER_LABEL };
   row2[2] = { v: todayDisplay, s: STYLE_DATE_INPUT_BOX };
@@ -328,12 +347,12 @@ function buildStyledContractorsWorksheet(items, subtitle) {
   row2[4] = { v: subtitle, s: STYLE_SUBTITLE_TEXT };
   rows.push(row2);
   merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: 1 } });
-  merges.push({ s: { r: 1, c: 4 }, e: { r: 1, c: 14 } });
+  merges.push({ s: { r: 1, c: 4 }, e: { r: 1, c: 15 } });
 
   // ROW 3: Spacing
-  rows.push(Array(15).fill(null).map(() => ({ v: '', s: {} })));
+  rows.push(Array(16).fill(null).map(() => ({ v: '', s: {} })));
 
-  // ROW 4: Column Headers (Exact structure requested by user)
+  // ROW 4: Column Headers (with Allowed Duration of Work)
   const headers = [
     'Name',
     'Nationality',
@@ -341,6 +360,7 @@ function buildStyledContractorsWorksheet(items, subtitle) {
     'Type of Work',
     'PTW Number',
     'Area of Work',
+    'Allowed Duration of Work',
     'Vehicle No.',
     'Mobile Number',
     'Department',
@@ -357,17 +377,17 @@ function buildStyledContractorsWorksheet(items, subtitle) {
   const dateKeys = Object.keys(dateGroups);
 
   if (dateKeys.length === 0) {
-    const emptyRow = Array(15).fill(null).map(() => ({ v: '', s: STYLE_CELL_CENTER }));
+    const emptyRow = Array(16).fill(null).map(() => ({ v: '', s: STYLE_CELL_CENTER }));
     emptyRow[0] = { v: 'No contractor records logged', s: STYLE_CELL_CENTER };
     rows.push(emptyRow);
-    merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 14 } });
+    merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 15 } });
     currentRowIdx++;
   } else {
     dateKeys.forEach((dateBanner) => {
-      const bannerRow = Array(15).fill(null).map(() => ({ v: '', s: STYLE_DATE_BANNER }));
+      const bannerRow = Array(16).fill(null).map(() => ({ v: '', s: STYLE_DATE_BANNER }));
       bannerRow[0] = { v: dateBanner, s: STYLE_DATE_BANNER };
       rows.push(bannerRow);
-      merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 14 } });
+      merges.push({ s: { r: currentRowIdx, c: 0 }, e: { r: currentRowIdx, c: 15 } });
       currentRowIdx++;
 
       dateGroups[dateBanner].forEach((l) => {
@@ -406,6 +426,7 @@ function buildStyledContractorsWorksheet(items, subtitle) {
           { v: info.workKind || 'General Work',       s: STYLE_CELL_LEFT },
           { v: info.workPermit || '—',                s: STYLE_CELL_CENTER },
           { v: info.workArea || '—',                  s: STYLE_CELL_LEFT },
+          { v: formatAllowedTime(l.allowed_hours),    s: STYLE_CELL_ALLOWED },
           { v: l.vehicle_plate || 'Walk-in',          s: STYLE_CELL_CENTER },
           { v: l.mobile_number || '—',                s: STYLE_CELL_CENTER },
           { v: info.department,                       s: STYLE_CELL_CENTER },
@@ -440,6 +461,7 @@ function buildStyledContractorsWorksheet(items, subtitle) {
     { wch: 20 }, // Type of Work
     { wch: 15 }, // PTW Number
     { wch: 20 }, // Area of Work
+    { wch: 24 }, // Allowed Duration of Work
     { wch: 15 }, // Vehicle No.
     { wch: 18 }, // Mobile Number
     { wch: 22 }, // Department
@@ -658,26 +680,26 @@ export async function generateProfessionalExcelReport(initialLogs, notify) {
   const wsSummary = buildStyledSummaryWorksheet(allMasterLogs);
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
 
-  // 2. Master Register (Full Database)
+  // 2. Master Register (Full Database with Allowed Time column)
   const wsMaster = buildStyledStandardWorksheet(allMasterLogs, "MASTER REGISTER • Complete chronological log of all visitor & security traffic.");
   XLSX.utils.book_append_sheet(wb, wsMaster, 'Master Register');
 
-  // 3. Visitors Tab
+  // 3. Visitors Tab (with Allowed Time)
   const visitorItems = allMasterLogs.filter((l) => l.traffic_type === 'hotel_guest_visitor');
   const wsVisitors = buildStyledStandardWorksheet(visitorItems, "VISITORS REGISTER • Guest, business meetings, and official visitors.");
   XLSX.utils.book_append_sheet(wb, wsVisitors, 'Visitors');
 
-  // 4. Contractors Tab (Specialized columns: Type of Work, PTW Number, Area of Work)
+  // 4. Contractors Tab (with Allowed Duration of Work column)
   const contractorItems = allMasterLogs.filter((l) => l.traffic_type === 'contractor_engineer');
   const wsContractors = buildStyledContractorsWorksheet(contractorItems, "CONTRACTORS REGISTER • External contractors, technicians & PTW works.");
   XLSX.utils.book_append_sheet(wb, wsContractors, 'Contractors');
 
-  // 5. Suppliers Tab (Purpose of visit: Delivery, Meeting)
+  // 5. Suppliers Tab (with Allowed Time)
   const supplierItems = allMasterLogs.filter((l) => l.traffic_type === 'supplier_delivery');
   const wsSuppliers = buildStyledStandardWorksheet(supplierItems, "SUPPLIERS REGISTER • Delivery trucks, materials & vendors.");
   XLSX.utils.book_append_sheet(wb, wsSuppliers, 'Suppliers');
 
-  // 6. Casuals Tab
+  // 6. Casuals Tab (with Allowed Time)
   const casualItems = allMasterLogs.filter((l) => l.traffic_type === 'casual_staff_banquet');
   const wsCasuals = buildStyledStandardWorksheet(casualItems, "CASUAL STAFF REGISTER • F&B, Housekeeping, Stewarding & Entertainment.");
   XLSX.utils.book_append_sheet(wb, wsCasuals, 'Casuals');
