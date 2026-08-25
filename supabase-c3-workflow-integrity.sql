@@ -66,7 +66,9 @@ begin
   ) values (
     (p->>'shift_id')::uuid, p->>'logged_by_guard', p->>'full_name', v_doc,
     p->>'mobile_number', p->>'company_name', p->>'vehicle_plate', p->>'nationality',
-    nullif(p->>'id_expiry_date','')::date, p->>'traffic_type', p->>'purpose_of_visit',
+    nullif(p->>'id_expiry_date','')::date,
+    (p->>'traffic_type')::hotel_traffic_type,   -- traffic_type is a Postgres enum, cast explicitly
+    p->>'purpose_of_visit',
     p->>'host_room_or_dept', v_pass, (p->>'allowed_hours')::numeric, 'inside'
   ) returning id into v_id;
 
