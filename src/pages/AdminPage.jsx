@@ -7,7 +7,7 @@ import {
   Shield, Users, Tag, FileText, AlertTriangle, LogOut,
   Plus, Trash2, Eye, EyeOff, RefreshCw, Download, Wifi,
   CheckCircle, CheckCircle2, XCircle, Clock, Loader2, ChevronDown, Search,
-  BarChart2, Phone, Edit2, Save, X, Key, Smartphone,
+  BarChart2, Phone, Edit2, Save, X, Key, Smartphone, Unlock,
 } from 'lucide-react';
 
 /* ── Design tokens (violet/purple accent for admin) ─────── */
@@ -235,11 +235,17 @@ function StaffManager({ session, notify }) {
   const [adding,  setAdding]  = useState(false);
   const [editId,  setEditId]  = useState(null);
   const [editPin, setEditPin] = useState('');
+  const [lockedNames, setLockedNames] = useState(() => new Set());
 
   const fetchGuards = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from('guards').select('*').order('name');
-    setGuards(data || []); setLoading(false);
+    const [{ data }, { data: locked }] = await Promise.all([
+      supabase.from('guards').select('*').order('name'),
+      supabase.rpc('list_locked_guards'),
+    ]);
+    setGuards(data || []);
+    setLockedNames(new Set((locked || []).map((r) => r.guard_name)));
+    setLoading(false);
   }, []);
 
   useEffect(() => { fetchGuards(); }, [fetchGuards]);
@@ -274,6 +280,14 @@ function StaffManager({ session, notify }) {
     if (!confirm(`Delete guard "${g.name}"? This cannot be undone.`)) return;
     await supabase.from('guards').delete().eq('id', g.id);
     notify(`Guard "${g.name}" deleted`, 'info'); fetchGuards();
+  };
+
+  const unlockGuard = async (g) => {
+    const { data, error } = await supabase.rpc('clear_guard_lockout', { p_name: g.name });
+    if (error) return notify(error.message, 'error');
+    if (!data?.success) return notify(data?.error || 'Could not unlock guard', 'error');
+    notify(`${g.name} unlocked — they can sign in again`, 'success');
+    fetchGuards();
   };
 
   return (
@@ -314,10 +328,25 @@ function StaffManager({ session, notify }) {
                     {g.name[0].toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm text-white">{g.name}</p>
+                    <p className="font-semibold text-sm text-white flex items-center gap-1.5">
+                      {g.name}
+                      {lockedNames.has(g.name) && (
+                        <span className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-600/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-300">
+                          🔒 LOCKED
+                        </span>
+                      )}
+                    </p>
                     <p className="text-[10px] text-slate-500">Created {new Date(g.created_at).toLocaleDateString()}</p>
                   </div>
                   <div className="flex items-center gap-2">
+                    {/* Unlock (only when locked out by failed PIN attempts) */}
+                    {lockedNames.has(g.name) && (
+                      <button onClick={() => unlockGuard(g)}
+                        className="rounded-lg border border-amber-500/40 bg-amber-600/10 px-2.5 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-600/20 transition flex items-center gap-1"
+                        title="Locked by too many failed PIN attempts — click to unlock now">
+                        <Unlock className="h-3 w-3" /> Unlock
+                      </button>
+                    )}
                     {/* PIN reset */}
                     {editId === g.id ? (
                       <div className="flex items-center gap-2">
