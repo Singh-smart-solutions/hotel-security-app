@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '../supabaseClient';
+import { supabase, ensureAnonSession } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
 import { generateProfessionalExcelReport } from '../utils/excelExporter';
 import { parseLogDetails } from '../utils/logFormatter';
@@ -155,20 +155,32 @@ function GuardLogin({ onLogin, notify }) {
   const [loading,  setLoading]  = useState(true);
 
   useEffect(() => {
-    supabase.from('guards').select('id,name').eq('is_active', true).order('name')
-      .then(({ data, error }) => {
-        if (error) notify('Could not load guard list — run the Phase 2 SQL migration first.', 'error');
-        setGuards(data || []);
-        setLoading(false);
-      });
+    let cancelled = false;
+    (async () => {
+      // Establish an authenticated (anonymous) session before anything else,
+      // so guard actions run under a real JWT instead of the public anon key.
+      await ensureAnonSession();
+      const { data, error } = await supabase.rpc('list_active_guards');
+      if (cancelled) return;
+      if (error) notify('Could not load guard list — run the C2 SQL migration first.', 'error');
+      setGuards(data || []);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, [notify]);
 
   const handlePin = async (pin) => {
     if (!selected) { setErr('Select your name first'); return; }
     setBusy(true); setErr('');
     try {
+      // A real session is required to bind the PIN to (anonymous sign-in).
+      const session = await ensureAnonSession();
+      if (!session) {
+        setErr('Secure sign-in unavailable. Enable Anonymous sign-ins in Supabase Auth.');
+        return;
+      }
       const pinHash = await hashPin(pin, selected.name);
-      const { data, error } = await supabase.rpc('verify_guard_pin', {
+      const { data, error } = await supabase.rpc('bind_guard_session', {
         p_name: selected.name, p_pin_hash: pinHash,
       });
       if (error) throw error;
@@ -1817,6 +1829,27 @@ export default function GuardPage({ notify }) {
     try { return JSON.parse(localStorage.getItem('active_hotel_shift') || 'null'); } catch { return null; }
   });
 
+  // Guard against a stale terminal: if a guard_session is cached but the
+  // Supabase session is no longer a verified guard (expired / rotated / signed
+  // out elsewhere), force a fresh PIN login so RLS-protected queries don't
+  // fail silently.
+  useEffect(() => {
+    if (!guardSession) return;
+    let cancelled = false;
+    (async () => {
+      await ensureAnonSession();
+      const { data: verified } = await supabase.rpc('is_verified_guard');
+      if (!cancelled && !verified) {
+        localStorage.removeItem('guard_session');
+        localStorage.removeItem('active_hotel_shift');
+        setGuardSession(null);
+        setActiveShift(null);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleLogin = (g) => {
     localStorage.setItem('guard_session', JSON.stringify(g));
     setGuardSession(g);
@@ -1833,6 +1866,8 @@ export default function GuardPage({ notify }) {
     localStorage.removeItem('guard_session');
     localStorage.removeItem('active_hotel_shift');
     setGuardSession(null); setActiveShift(null);
+    // End the Supabase session so the verified-guard binding is dropped.
+    supabase.auth.signOut();
   };
 
   if (!guardSession) return <GuardLogin onLogin={handleLogin} notify={notify} />;
