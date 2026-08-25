@@ -609,22 +609,37 @@ function LogTable({ notify }) {
     if (addH <= 0) return notify('Extension hours must be greater than 0', 'error');
 
     setExtending(true);
-    const currentAh = Number(extendModalLog.allowed_hours) || 2;
-    const newAh = currentAh + addH;
-    const existingPurpose = extendModalLog.purpose_of_visit || 'Standard Entry';
-    const note = `[Ext +${addH}h | Reason: ${extendReason.trim()} | Approved By: ${extendApprover.trim()} (Manager Portal)]`;
-    const updatedPurpose = `${existingPurpose} ${note}`.trim();
-
-    const { error } = await supabase.from('hotel_security_logs').update({
-      allowed_hours: newAh,
-      purpose_of_visit: updatedPurpose,
-    }).eq('id', extendModalLog.id);
-
+    // Extension is recorded server-side (extensions table) and raises
+    // allowed_hours atomically via grant_extension (manager-gated).
+    const { data: result, error } = await supabase.rpc('grant_extension', {
+      p_log_id:   extendModalLog.id,
+      p_hours:    addH,
+      p_reason:   extendReason.trim(),
+      p_approver: extendApprover.trim(),
+    });
     setExtending(false);
     if (error) return notify('Failed to extend time: ' + error.message, 'error');
+    if (!result?.success) return notify(result?.error || 'Failed to extend time', 'error');
 
-    notify(`✅ Extended ${extendModalLog.full_name} by +${addH}h (Total allowed: ${newAh}h)`, 'success');
+    notify(`✅ Extended ${extendModalLog.full_name} by +${addH}h (Total allowed: ${result.new_allowed_hours}h)`, 'success');
     setExtendModalLog(null);
+    fetchLogs();
+  };
+
+  // Manager-only: close a stuck / overstayed 'inside' record (person left but
+  // was never checked out) and free its pass. Enforced by manager_force_checkout.
+  const handleForceCheckout = async (l) => {
+    const reason = window.prompt(
+      `Force check-out "${l.full_name}"?\nThis closes the record and frees pass ${l.pass_badge_no || 'CASUAL'}.\n\nReason (e.g. "left without checkout", "stale/duplicate entry"):`,
+      '',
+    );
+    if (reason === null) return; // cancelled
+    const { data: result, error } = await supabase.rpc('manager_force_checkout', {
+      p_log_id: l.id, p_reason: reason.trim(),
+    });
+    if (error) return notify(error.message, 'error');
+    if (!result?.success) return notify(result?.error || 'Force check-out failed', 'error');
+    notify(`✅ ${l.full_name} force-checked-out — pass freed`, 'success');
     fetchLogs();
   };
 
@@ -751,19 +766,29 @@ function LogTable({ notify }) {
                   </td>
                   <td className="px-3 py-2.5 text-xs">
                     {l.status === 'inside' ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExtendModalLog(l);
-                          setExtraHours(2);
-                          setExtendReason('');
-                          setExtendApprover('');
-                        }}
-                        className="inline-flex items-center gap-1 rounded-lg bg-indigo-600/20 border border-indigo-500/40 px-2 py-1 text-[11px] font-bold text-indigo-300 hover:bg-indigo-600/30 transition shadow-sm"
-                        title="Extend allowed stay/shift time"
-                      >
-                        <Clock className="h-3 w-3" /> + Extend
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExtendModalLog(l);
+                            setExtraHours(2);
+                            setExtendReason('');
+                            setExtendApprover('');
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg bg-indigo-600/20 border border-indigo-500/40 px-2 py-1 text-[11px] font-bold text-indigo-300 hover:bg-indigo-600/30 transition shadow-sm"
+                          title="Extend allowed stay/shift time"
+                        >
+                          <Clock className="h-3 w-3" /> + Extend
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleForceCheckout(l)}
+                          className="inline-flex items-center gap-1 rounded-lg bg-red-600/20 border border-red-500/40 px-2 py-1 text-[11px] font-bold text-red-300 hover:bg-red-600/30 transition shadow-sm"
+                          title="Force check-out (manager): close a stale/overstayed record and free the pass"
+                        >
+                          <LogOut className="h-3 w-3" /> Force Out
+                        </button>
+                      </div>
                     ) : (
                       <span className="text-slate-600 text-xs">—</span>
                     )}
