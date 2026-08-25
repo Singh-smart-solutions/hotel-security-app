@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import * as XLSX from 'xlsx-js-style';
 import { supabase } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
 import { generateProfessionalExcelReport } from '../utils/excelExporter';
