@@ -1069,6 +1069,7 @@ export default function AdminPage({ notify }) {
   const [tab,           setTab]           = useState('dashboard');
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [authLoading,   setAuthLoading]   = useState(true);
+  const [isManager,     setIsManager]     = useState(null); // null = checking role
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -1077,6 +1078,18 @@ export default function AdminPage({ notify }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // Authorize by ROLE, not just authentication: only active managers may use
+  // the portal. RLS already blocks a non-manager's writes, but the UI must not
+  // be shown to them either.
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    supabase.rpc('is_manager').then(({ data }) => {
+      if (!cancelled) setIsManager(Boolean(data));
+    });
+    return () => { cancelled = true; };
+  }, [session]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut(); setSession(null); notify('Signed out', 'info');
@@ -1091,6 +1104,40 @@ export default function AdminPage({ notify }) {
   }
 
   if (!session) return <ManagerAuth onAuth={setSession} notify={notify} />;
+
+  // Still confirming the signed-in user's role.
+  if (isManager === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950">
+        <Loader2 className="h-8 w-8 animate-spin text-violet-400" />
+      </div>
+    );
+  }
+
+  // Authenticated but NOT a manager — deny access to the portal.
+  if (!isManager) {
+    return (
+      <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white flex items-center justify-center p-4">
+        <div className={`relative w-full max-w-sm p-8 text-center ${CARD}`}>
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-red-500 to-rose-600 shadow-xl shadow-red-900/50">
+            <AlertTriangle className="h-8 w-8 text-white" />
+          </div>
+          <h1 className="text-xl font-bold">Manager Access Required</h1>
+          <p className="mt-2 text-sm text-slate-400">
+            This account is signed in but is not a security manager. Ask an
+            existing manager to grant your account manager access.
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">{session.user.email}</p>
+          <button onClick={handleSignOut} className={`${BTN_PRI} mt-6 w-full py-2.5 text-sm`}>
+            <LogOut className="h-4 w-4" /> Sign out
+          </button>
+          <div className="mt-4 border-t border-white/5 pt-4">
+            <a href="/" className="text-xs text-slate-500 hover:text-violet-400 transition-colors">← Guard Terminal</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
