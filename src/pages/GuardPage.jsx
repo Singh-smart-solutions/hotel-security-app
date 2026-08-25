@@ -619,21 +619,20 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   }, [applyExtractedFields, beep, closeDocumentScanner, notify]);
 
   /* ── Check-out (Strict Overstay Guard Lock) ── */
-  const handleCheckOut = useCallback(async (id, passNum, isOverstayed = false, extGranted = false) => {
-    if (isOverstayed && !extGranted) {
+  const handleCheckOut = useCallback(async (id, passNum) => {
+    // The overstay lock is enforced server-side by check_out_visitor (see
+    // supabase-c3-workflow-integrity.sql): it rejects an overstayed visitor
+    // until a manager extends the time or force-closes the record, and frees
+    // the pass atomically on a valid checkout.
+    const { data: result, error } = await supabase.rpc('check_out_visitor', {
+      p_log_id: id, p_guard: guard.name,
+    });
+    if (error) { beep(false); return notify(error.message, 'error'); }
+    if (!result?.success) {
       beep(false);
       if ('vibrate' in navigator) navigator.vibrate([80, 60, 80]);
-      return notify('⛔ OVERSTAY LOCK: Visitor has exceeded allowed time. Manager must grant extension in Manager Portal before check-out!', 'error');
-    }
-
-    const { error } = await supabase.from('hotel_security_logs').update({
-      status:          'checked_out',
-      check_out_time:  new Date().toISOString(),
-      checkout_by_guard: guard.name,
-    }).eq('id', id);
-    if (error) return notify(error.message, 'error');
-    if (passNum && passNum !== 'CASUAL') {
-      await supabase.from('passes').update({ status: 'available' }).eq('pass_number', passNum);
+      fetchLogs(); fetchPasses(currentPassType);
+      return notify(`⛔ ${result?.error || 'Check-out failed'}`, 'error');
     }
     beep(true);
     if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
@@ -760,21 +759,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     }
     if (isIdExpired) return notify('⛔ ACCESS DENIED — Document is expired', 'error');
 
-    // ── HARD PREVENT DOUBLE PASS ISSUANCE ──
-    if (requiresPass && selectedPass) {
-      const { data: existingActive } = await supabase.from('hotel_security_logs')
-        .select('full_name, pass_badge_no')
-        .eq('pass_badge_no', selectedPass)
-        .eq('status', 'inside')
-        .maybeSingle();
-
-      if (existingActive) {
-        beep(false);
-        fetchPasses(currentPassType);
-        return notify(`⛔ Pass ${selectedPass} is ALREADY ISSUED to ${existingActive.full_name} (Currently on property). Cannot re-assign!`, 'error');
-      }
-    }
-
+    // Pass contention AND duplicate-person prevention are enforced atomically
+    // server-side by check_in_visitor (see supabase-c3-workflow-integrity.sql).
     setSubmitting(true);
 
     let effectiveDept = baseDept;
@@ -794,28 +780,30 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
     const assignedBadge = requiresPass ? selectedPass : 'CASUAL';
 
-    const { error: logErr } = await supabase.from('hotel_security_logs').insert([{
-      shift_id:          shift.id,
-      logged_by_guard:   guard.name,
-      full_name:         fullName.trim(),
-      doc_number:        docNumber.trim(),
-      mobile_number:     mobileNumber.trim(),
-      company_name:      companyName.trim(),
-      vehicle_plate:     vehiclePlate.trim(),
-      nationality:       nationality.trim(),
-      id_expiry_date:    idExpiryDate || null,
-      traffic_type:      trafficType,
-      purpose_of_visit:  purpose,
-      host_room_or_dept: effectiveDept,
-      pass_badge_no:     assignedBadge,
-      allowed_hours:     Number(allowedHours) > 0 ? Number(allowedHours) : 0.1,
-      status:            'inside',
-    }]);
+    const { data: result, error: logErr } = await supabase.rpc('check_in_visitor', {
+      p: {
+        shift_id:          shift.id,
+        logged_by_guard:   guard.name,
+        full_name:         fullName.trim(),
+        doc_number:        docNumber.trim(),
+        mobile_number:     mobileNumber.trim(),
+        company_name:      companyName.trim(),
+        vehicle_plate:     vehiclePlate.trim(),
+        nationality:       nationality.trim(),
+        id_expiry_date:    idExpiryDate || null,
+        traffic_type:      trafficType,
+        purpose_of_visit:  purpose,
+        host_room_or_dept: effectiveDept,
+        pass_badge_no:     assignedBadge,
+        allowed_hours:     Number(allowedHours) > 0 ? Number(allowedHours) : 0.1,
+      },
+    });
 
-    if (logErr) { setSubmitting(false); return notify(logErr.message, 'error'); }
-
-    if (requiresPass && selectedPass) {
-      await supabase.from('passes').update({ status: 'in_use' }).eq('pass_number', selectedPass);
+    if (logErr) { setSubmitting(false); beep(false); return notify(logErr.message, 'error'); }
+    if (!result?.success) {
+      setSubmitting(false); beep(false);
+      fetchLogs(); fetchPasses(currentPassType);
+      return notify(`⛔ ${result?.error || 'Check-in failed'}`, 'error');
     }
 
     beep(true);
