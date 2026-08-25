@@ -1,4 +1,14 @@
 /**
+ * Neutralizes spreadsheet formula injection: a cell whose text starts with
+ * = + - @ (or a tab/CR) can execute as a formula when the .xlsx is opened.
+ * Prefix such values with an apostrophe so they render as literal text.
+ */
+export function escapeSpreadsheetValue(v) {
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) return `'${v}`;
+  return v;
+}
+
+/**
  * Parses structured security log fields for clean, rich presentation
  * across Guard Terminal, Manager Portal, and Excel Exporter.
  */

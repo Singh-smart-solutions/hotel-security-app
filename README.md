@@ -59,8 +59,8 @@ flowchart TD
 ## ✨ Key Features & Capabilities
 
 ### 1. 🛡️ Guard Security Terminal (`/`)
-- **Fast Security Officer Authentication**: 4-digit PIN authentication with SHA-256 cryptographic hashing.
-- **AI Document OCR Scanner**:
+- **Fast Security Officer Authentication**: 6-digit PIN (SHA-256 hashed), verified server-side and bound to an authenticated Supabase session; repeated wrong PINs lock the guard out. See [`SECURITY.md`](./SECURITY.md) and the `supabase-c1_5-*` / `supabase-c2-*` migrations.
+- **Cloud Document OCR Scanner (OCR.space)**:
   - Live camera viewfinder scanning Emirates IDs and international passports.
   - Automatically parses Full Name, Document Number, Nationality, and Expiry Date.
   - Automatic detection and blocking of **Expired Documents** (`⛔ ACCESS DENIED`).
@@ -90,7 +90,7 @@ flowchart TD
   - Requires mandatory justification reason and manager name.
   - Instantly syncs to the Guard Terminal, unlocking the overstay lock in real time.
 - **Pass Inventory Management**: Create, delete, and link physical pass numbers (`V-001`, `C-001`, `S-001`) with NFC tag UIDs.
-- **Security Personnel Management**: Register guards, assign active gates, and manage 4-digit PINs.
+- **Security Personnel Management**: Register guards, assign active gates, and manage 6-digit PINs.
 - **24-Hour Active Shift View**: Synchronized logs table matching the Guard Terminal, with filters for Last 24 Hours, Last 12 Hours, and All Time.
 
 ---
@@ -147,7 +147,7 @@ Engineered with `xlsx-js-style` to match executive hospitality audit spreadsheet
 | :--- | :--- | :--- |
 | `id` | `UUID (PK)` | Guard record identifier |
 | `name` | `TEXT` | Security officer name |
-| `pin_hash` | `TEXT` | SHA-256 hashed 4-digit PIN |
+| `pin_hash` | `TEXT` | SHA-256 hashed 6-digit PIN |
 | `is_active` | `BOOLEAN` | Account status flag |
 
 ### 3. `passes`
@@ -164,8 +164,8 @@ Engineered with `xlsx-js-style` to match executive hospitality audit spreadsheet
 ## ⚡ Supabase Edge Functions
 
 - **`scan-id` (`supabase/functions/scan-id/index.ts`)**:
-  - Cloud OCR parsing proxy for Emirates ID (front & back TD1 format) and International Passports (ICAO 9303 TD3 MRZ).
-  - Built-in rate limit handling (10 scans/min) returning clear, structured response codes to prevent frontend stalls.
+  - OCR parsing proxy (**OCR.space**) for Emirates ID (front & back TD1 format) and International Passports (ICAO 9303 TD3 MRZ).
+  - CORS restricted to an `ALLOWED_ORIGINS` allowlist; deploy **without** `--no-verify-jwt` so only signed-in callers can invoke it. Configure with `npx supabase secrets set OCR_SPACE_API_KEY=…`.
 
 ---
 
