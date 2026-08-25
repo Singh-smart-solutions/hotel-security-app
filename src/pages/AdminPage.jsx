@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx-js-style';
 import { supabase } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
 import { generateProfessionalExcelReport } from '../utils/excelExporter';
-import { parseLogDetails } from '../utils/logFormatter';
+import { parseLogDetails, escapeSpreadsheetValue } from '../utils/logFormatter';
 import {
   Shield, Users, Tag, FileText, AlertTriangle, LogOut,
   Plus, Trash2, Eye, EyeOff, RefreshCw, Download, Wifi,
@@ -993,7 +993,9 @@ function EmergencyModal({ onClose, notify }) {
       [],
     ];
     const ws = XLSX.utils.aoa_to_sheet(header);
-    XLSX.utils.sheet_add_json(ws, rows, { origin: 'A5' });
+    const safeRows = rows.map((r) =>
+      Object.fromEntries(Object.entries(r).map(([k, val]) => [k, escapeSpreadsheetValue(val)])));
+    XLSX.utils.sheet_add_json(ws, safeRows, { origin: 'A5' });
     ws['!cols'] = [10,24,20,14,14,22,18,12].map((w) => ({ wch: w }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Evacuation List');

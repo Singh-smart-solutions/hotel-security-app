@@ -1,6 +1,6 @@
 import XLSX from 'xlsx-js-style';
 import { supabase } from '../supabaseClient';
-import { parseLogDetails } from './logFormatter';
+import { parseLogDetails, escapeSpreadsheetValue } from './logFormatter';
 
 const formatTimeOnly = (d) => {
   if (!d) return '—';
@@ -273,12 +273,12 @@ function buildStyledStandardWorksheet(items, subtitle) {
     });
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => c.v)));
+  const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => escapeSpreadsheetValue(c.v))));
 
   rows.forEach((rowObj, rIdx) => {
     rowObj.forEach((cellObj, cIdx) => {
       const cellRef = XLSX.utils.encode_cell({ r: rIdx, c: cIdx });
-      if (!ws[cellRef]) ws[cellRef] = { v: cellObj.v, t: typeof cellObj.v === 'number' ? 'n' : 's' };
+      if (!ws[cellRef]) ws[cellRef] = { v: escapeSpreadsheetValue(cellObj.v), t: typeof cellObj.v === 'number' ? 'n' : 's' };
       ws[cellRef].s = cellObj.s;
     });
   });
@@ -436,12 +436,12 @@ function buildStyledContractorsWorksheet(items, subtitle) {
     });
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => c.v)));
+  const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => escapeSpreadsheetValue(c.v))));
 
   rows.forEach((rowObj, rIdx) => {
     rowObj.forEach((cellObj, cIdx) => {
       const cellRef = XLSX.utils.encode_cell({ r: rIdx, c: cIdx });
-      if (!ws[cellRef]) ws[cellRef] = { v: cellObj.v, t: typeof cellObj.v === 'number' ? 'n' : 's' };
+      if (!ws[cellRef]) ws[cellRef] = { v: escapeSpreadsheetValue(cellObj.v), t: typeof cellObj.v === 'number' ? 'n' : 's' };
       ws[cellRef].s = cellObj.s;
     });
   });
@@ -617,12 +617,12 @@ function buildStyledSummaryWorksheet(logs) {
     ...guardRows,
   ];
 
-  const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => c.v)));
+  const ws = XLSX.utils.aoa_to_sheet(rows.map((r) => r.map((c) => escapeSpreadsheetValue(c.v))));
 
   rows.forEach((rowObj, rIdx) => {
     rowObj.forEach((cellObj, cIdx) => {
       const cellRef = XLSX.utils.encode_cell({ r: rIdx, c: cIdx });
-      if (!ws[cellRef]) ws[cellRef] = { v: cellObj.v, t: typeof cellObj.v === 'number' ? 'n' : 's' };
+      if (!ws[cellRef]) ws[cellRef] = { v: escapeSpreadsheetValue(cellObj.v), t: typeof cellObj.v === 'number' ? 'n' : 's' };
       ws[cellRef].s = cellObj.s;
     });
   });

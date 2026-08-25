@@ -468,9 +468,14 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const handleDocSearch = useCallback(async (val) => {
     if (preserveScanFields.current) { preserveScanFields.current = false; return; }
     if (val.length < 4) return;
+    // Sanitize before interpolating into a PostgREST .or() filter: strip any
+    // characters (commas, parentheses, quotes…) that could break out of the
+    // filter string and inject extra conditions.
+    const safe = val.replace(/[^A-Za-z0-9 +_-]/g, '').trim();
+    if (safe.length < 3) return;
     const { data } = await supabase.from('hotel_security_logs')
       .select('full_name,mobile_number,company_name,vehicle_plate,nationality,id_expiry_date')
-      .or(`doc_number.ilike.%${val}%,mobile_number.ilike.%${val}%,vehicle_plate.ilike.%${val}%`)
+      .or(`doc_number.ilike.%${safe}%,mobile_number.ilike.%${safe}%,vehicle_plate.ilike.%${safe}%`)
       .order('check_in_time', { ascending: false }).limit(1).maybeSingle();
     if (data) {
       if (data.full_name)    setFullName(data.full_name);

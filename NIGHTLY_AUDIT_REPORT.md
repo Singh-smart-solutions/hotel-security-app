@@ -1,5 +1,14 @@
 # 🌙 Nightly Autonomous Code Audit & Multi-Role Security Simulation Report
 
+> ⚠️ **HISTORICAL / SUPERSEDED — do not rely on this document.**
+> Its conclusions (e.g. "RLS integrity verified", "atomic pass contention",
+> "overstay hard-lock enforced") described client-side behavior only and did
+> **not** hold at the data layer. Those gaps were fixed later — see
+> [`SECURITY.md`](./SECURITY.md), [`C2_MIGRATION.md`](./C2_MIGRATION.md),
+> [`C3_MIGRATION.md`](./C3_MIGRATION.md) and the `supabase-c1_5-*`,
+> `supabase-c2-*`, `supabase-c3-*` migrations, which now enforce these rules in
+> the database. Kept for history only.
+
 **Date & Time**: 25 August 2026  
 **Git Branch**: `nightly-cleanup-and-audit`  
 **Execution Mode**: Autonomous Background Audit & Stress Test Suite  
