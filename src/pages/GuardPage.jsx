@@ -269,6 +269,7 @@ function ShiftStart({ guard, onStart, onLogout, notify }) {
   const [busy, setBusy] = useState(false);
   const [lastHandover, setLastHandover] = useState(null);
   const [loadingHandover, setLoadingHandover] = useState(false);
+  const [accepted, setAccepted] = useState(false);
 
   // Show the incoming guard the most recent completed handover for THIS gate,
   // so the note the previous officer left is actually delivered.
@@ -276,9 +277,10 @@ function ShiftStart({ guard, onStart, onLogout, notify }) {
     let cancelled = false;
     setLoadingHandover(true);
     setLastHandover(null);
+    setAccepted(false);
     (async () => {
       const { data } = await supabase.from('guard_shifts')
-        .select('guard_name, gate_location, handover_notes, end_time')
+        .select('id, guard_name, gate_location, handover_notes, end_time')
         .eq('gate_location', gate)
         .eq('status', 'completed')
         .order('end_time', { ascending: false })
@@ -289,14 +291,28 @@ function ShiftStart({ guard, onStart, onLogout, notify }) {
     return () => { cancelled = true; };
   }, [gate]);
 
+  // A handover note must be read & accepted before the shift can start.
+  const noteToAccept = !!(lastHandover?.handover_notes && lastHandover.handover_notes.trim());
+  const blockedUntilAccept = noteToAccept && !accepted;
+
   const submit = async (e) => {
     e.preventDefault();
+    if (blockedUntilAccept) {
+      return notify('Please read and accept the handover before starting your shift', 'error');
+    }
     setBusy(true);
     const { data, error } = await supabase.from('guard_shifts')
       .insert([{ guard_name: guard.name, gate_location: gate, status: 'active' }])
       .select().single();
+    if (error) { setBusy(false); return notify(error.message, 'error'); }
+
+    // Stamp the previous shift as acknowledged by this officer.
+    if (noteToAccept && lastHandover?.id) {
+      await supabase.from('guard_shifts')
+        .update({ acknowledged_by: guard.name, acknowledged_at: new Date().toISOString() })
+        .eq('id', lastHandover.id);
+    }
     setBusy(false);
-    if (error) return notify(error.message, 'error');
     notify(`Shift started — ${gate}`, 'success');
     onStart(data);
   };
@@ -348,6 +364,15 @@ function ShiftStart({ guard, onStart, onLogout, notify }) {
                   — {lastHandover.guard_name || 'Previous officer'}
                   {lastHandover.end_time ? `, ended ${new Date(lastHandover.end_time).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
                 </p>
+                <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-50">
+                  <input
+                    type="checkbox"
+                    checked={accepted}
+                    onChange={(e) => setAccepted(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-amber-500"
+                  />
+                  <span className="font-medium leading-snug">I have read and accept this handover.</span>
+                </label>
               </div>
             ) : (
               <div className="rounded-xl border border-white/10 bg-white/5 px-3.5 py-3 text-xs text-slate-400">
@@ -356,9 +381,9 @@ function ShiftStart({ guard, onStart, onLogout, notify }) {
             )
           ) : null}
 
-          <button type="submit" disabled={busy} className={`${BTN_PRI} w-full py-3.5 text-sm`}>
+          <button type="submit" disabled={busy || blockedUntilAccept} className={`${BTN_PRI} w-full py-3.5 text-sm`}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
-            Start Duty Shift
+            {blockedUntilAccept ? 'Accept handover to start' : 'Start Duty Shift'}
           </button>
         </form>
       </div>

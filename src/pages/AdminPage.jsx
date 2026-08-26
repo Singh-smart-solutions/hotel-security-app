@@ -1067,6 +1067,18 @@ function HandoverLog({ notify }) {
                     {s.handover_notes}
                   </p>
                 )}
+                {hasNote && (
+                  s.acknowledged_by ? (
+                    <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Accepted by {s.acknowledged_by}{s.acknowledged_at ? ` · ${fmtDate(s.acknowledged_at)}` : ''}
+                    </p>
+                  ) : (
+                    <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-300">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Not yet acknowledged by the next shift
+                    </p>
+                  )
+                )}
               </div>
             );
           })}
