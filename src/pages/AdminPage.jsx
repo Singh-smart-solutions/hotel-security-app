@@ -728,7 +728,7 @@ function LogTable({ notify }) {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-white/5">
-                {['Pass #','Name','Type','Company','Check-In','Check-Out','Duration','Status','Guard','Action'].map((h) => (
+                {['Pass #','Name','Type','Company','Department','Check-In','Check-Out','Duration','Status','Action'].map((h) => (
                   <th key={h} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">{h}</th>
                 ))}
               </tr>
