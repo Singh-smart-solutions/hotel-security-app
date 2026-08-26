@@ -8,7 +8,7 @@ import {
   Shield, Users, Tag, FileText, AlertTriangle, LogOut,
   Plus, Trash2, Eye, EyeOff, RefreshCw, Download, Wifi,
   CheckCircle, CheckCircle2, XCircle, Clock, Loader2, ChevronDown, Search,
-  BarChart2, Phone, Edit2, Save, X, Key, Smartphone, Unlock,
+  BarChart2, Phone, Edit2, Save, X, Key, Smartphone, Unlock, ClipboardList,
 } from 'lucide-react';
 
 /* ── Design tokens (violet/purple accent for admin) ─────── */
@@ -24,6 +24,7 @@ const TABS = [
   { id: 'staff',     label: 'Staff',      icon: Users     },
   { id: 'passes',    label: 'Passes',     icon: Tag       },
   { id: 'logs',      label: 'Logs',       icon: FileText  },
+  { id: 'handovers', label: 'Handovers',  icon: ClipboardList },
 ];
 
 const TRAFFIC_LABELS = {
@@ -983,6 +984,98 @@ function LogTable({ notify }) {
 /* ══════════════════════════════════════════════════════════════
    EMERGENCY MODAL
 ══════════════════════════════════════════════════════════════ */
+function HandoverLog({ notify }) {
+  const [shifts, setShifts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchShifts = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('guard_shifts')
+      .select('*')
+      .eq('status', 'completed')
+      .order('end_time', { ascending: false })
+      .limit(100);
+    setLoading(false);
+    if (error) { notify(error.message, 'error'); return; }
+    setShifts(data || []);
+  }, [notify]);
+
+  useEffect(() => { fetchShifts(); }, [fetchShifts]);
+
+  const noted   = shifts.filter((s) => (s.handover_notes || '').trim()).length;
+  const noNote  = shifts.length - noted;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-bold text-white">Shift Handovers</h2>
+          <p className="text-xs text-slate-400">
+            Record of completed shifts and whether each officer left a proper handover note.
+          </p>
+        </div>
+        <button onClick={fetchShifts} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10">
+          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+        </button>
+      </div>
+
+      {!loading && shifts.length > 0 && (
+        <div className="flex gap-3 text-xs">
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-semibold text-emerald-300">
+            <CheckCircle2 className="h-3.5 w-3.5" /> {noted} handed over with note
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 font-semibold text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5" /> {noNote} left no note
+          </span>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center gap-2 p-8 text-sm text-slate-400">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading handovers…
+        </div>
+      ) : shifts.length === 0 ? (
+        <div className="rounded-xl border border-white/10 bg-white/5 p-8 text-center text-sm text-slate-400">
+          No completed shifts yet.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {shifts.map((s) => {
+            const hasNote = (s.handover_notes || '').trim().length > 0;
+            return (
+              <div key={s.id} className={`rounded-xl border p-3.5 ${hasNote ? 'border-white/10 bg-white/5' : 'border-amber-500/20 bg-amber-500/5'}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-white">{s.guard_name || '—'}</span>
+                    <span className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-slate-300">{s.gate_location || '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-400">Ended {fmtDate(s.end_time)}</span>
+                    {hasNote ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300">
+                        <CheckCircle2 className="h-3 w-3" /> Noted
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
+                        <AlertTriangle className="h-3 w-3" /> No note
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {hasNote && (
+                  <p className="mt-2 whitespace-pre-wrap border-t border-white/5 pt-2 text-sm leading-snug text-slate-200">
+                    {s.handover_notes}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EmergencyModal({ onClose, notify }) {
   const [insideLogs, setInsideLogs] = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -1236,6 +1329,7 @@ export default function AdminPage({ notify }) {
         {tab === 'staff'     && <StaffManager session={session} notify={notify} />}
         {tab === 'passes'    && <PassManager session={session} notify={notify} />}
         {tab === 'logs'      && <LogTable notify={notify} />}
+        {tab === 'handovers' && <HandoverLog notify={notify} />}
       </main>
 
       {emergencyOpen && <EmergencyModal onClose={() => setEmergencyOpen(false)} notify={notify} />}
