@@ -267,6 +267,27 @@ function GuardLogin({ onLogin, notify }) {
 function ShiftStart({ guard, onStart, onLogout, notify }) {
   const [gate, setGate] = useState(GATE_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
+  const [lastHandover, setLastHandover] = useState(null);
+  const [loadingHandover, setLoadingHandover] = useState(false);
+
+  // Show the incoming guard the most recent completed handover for THIS gate,
+  // so the note the previous officer left is actually delivered.
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingHandover(true);
+    setLastHandover(null);
+    (async () => {
+      const { data } = await supabase.from('guard_shifts')
+        .select('guard_name, gate_location, handover_notes, end_time')
+        .eq('gate_location', gate)
+        .eq('status', 'completed')
+        .order('end_time', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!cancelled) { setLastHandover(data || null); setLoadingHandover(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [gate]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -310,6 +331,31 @@ function ShiftStart({ guard, onStart, onLogout, notify }) {
               <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-slate-400" />
             </div>
           </div>
+
+          {/* Handover from the previous shift on this gate */}
+          {loadingHandover ? (
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-3 text-xs text-slate-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking for a handover from the last shift…
+            </div>
+          ) : lastHandover ? (
+            lastHandover.handover_notes && lastHandover.handover_notes.trim() ? (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-3">
+                <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-amber-300">
+                  <Tag className="h-3.5 w-3.5" /> Handover from last shift
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-snug text-amber-50">{lastHandover.handover_notes}</p>
+                <p className="mt-2 text-[11px] text-amber-200/70">
+                  — {lastHandover.guard_name || 'Previous officer'}
+                  {lastHandover.end_time ? `, ended ${new Date(lastHandover.end_time).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-white/5 px-3.5 py-3 text-xs text-slate-400">
+                Last shift on this gate ({lastHandover.guard_name || 'previous officer'}) left no handover note.
+              </div>
+            )
+          ) : null}
+
           <button type="submit" disabled={busy} className={`${BTN_PRI} w-full py-3.5 text-sm`}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
             Start Duty Shift
