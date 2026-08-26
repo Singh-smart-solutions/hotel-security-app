@@ -1,3 +1,5 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
 // Restrict CORS to an allowlist (comma-separated ALLOWED_ORIGINS secret).
 // Defaults to the production domain; unknown origins fall back to the first
 // allowed origin, so other websites cannot use this endpoint from a browser.
@@ -62,6 +64,38 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({ error: 'Method not allowed' }),
       { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
+  }
+
+  // Require a signed-in caller. The public anon key is NOT a user token, so it
+  // is rejected here — this is what stops the endpoint being used as an open
+  // OCR proxy (H1). Guard/manager sessions send their access token, which the
+  // supabase-js client attaches as the Authorization header automatically.
+  {
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
+    const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (!SUPABASE_URL || !SERVICE_ROLE) {
+      return new Response(
+        JSON.stringify({ error: 'Server not configured' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    const token = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '')
+    if (!token) {
+      return new Response(
+        JSON.stringify({ error: 'Sign in required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    const authClient = createClient(SUPABASE_URL, SERVICE_ROLE, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    })
+    const { data: userData, error: userErr } = await authClient.auth.getUser(token)
+    if (userErr || !userData?.user) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid or expired session — please sign in again' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
   }
 
   try {
