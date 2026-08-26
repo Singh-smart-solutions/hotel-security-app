@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx-js-style';
 import { supabase } from '../supabaseClient';
 import { hashPin } from '../lib/crypto';
-import { generateProfessionalExcelReport } from '../utils/excelExporter';
+import { generateProfessionalExcelReport, writeWorkbookWithFrozenHeaders } from '../utils/excelExporter';
 import { parseLogDetails, escapeSpreadsheetValue } from '../utils/logFormatter';
 import {
   Shield, Users, Tag, FileText, AlertTriangle, LogOut,
@@ -1023,7 +1023,7 @@ function EmergencyModal({ onClose, notify }) {
     }
   };
 
-  const downloadExcel = () => {
+  const downloadExcel = async () => {
     const rows = insideLogs.map((l) => ({
       'PASS #':      l.pass_badge_no,
       'FULL NAME':   l.full_name,
@@ -1045,9 +1045,12 @@ function EmergencyModal({ onClose, notify }) {
       Object.fromEntries(Object.entries(r).map(([k, val]) => [k, escapeSpreadsheetValue(val)])));
     XLSX.utils.sheet_add_json(ws, safeRows, { origin: 'A5' });
     ws['!cols'] = [10,24,20,14,14,22,18,12].map((w) => ({ wch: w }));
+    // Freeze the 3 banner rows + blank + the column-header row (rows 1-5) so
+    // the headers stay visible while scrolling the evacuation list.
+    ws['!views'] = [{ state: 'frozen', ySplit: 5, topLeftCell: 'A6', activeCell: 'A6' }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Evacuation List');
-    XLSX.writeFile(wb, `EVACUATION-${new Date().toISOString().slice(0,16).replace('T','-')}.xlsx`);
+    await writeWorkbookWithFrozenHeaders(wb, `EVACUATION-${new Date().toISOString().slice(0,16).replace('T','-')}.xlsx`);
     notify('Evacuation Excel downloaded', 'success');
   };
 
