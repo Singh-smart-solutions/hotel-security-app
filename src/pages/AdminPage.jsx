@@ -570,7 +570,8 @@ function LogTable({ notify }) {
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     let q = supabase.from('hotel_security_logs').select('*').order('check_in_time', { ascending: false }).limit(500);
-    if (status !== 'all') q = q.eq('status', status);
+    if (status === 'overstay') q = q.eq('status', 'inside'); // overstayers are still inside
+    else if (status !== 'all') q = q.eq('status', status);
     if (ttype !== 'all')  q = q.eq('traffic_type', ttype);
 
     if (timeRange === '12h' && !dateFrom && !dateTo) {
@@ -587,19 +588,51 @@ function LogTable({ notify }) {
     setLogs(data || []); setLoading(false);
   }, [status, ttype, timeRange, dateFrom, dateTo]);
 
-  useEffect(() => {
-    fetchLogs();
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now());
-      fetchLogs();
-    }, 10000); // 10s auto-refresh
-    return () => clearInterval(interval);
-  }, [fetchLogs]);
+  // Keep the latest fetchLogs in a ref so the realtime subscription (mounted
+  // once) always refetches using the current filters.
+  const fetchLogsRef = useRef(fetchLogs);
+  useEffect(() => { fetchLogsRef.current = fetchLogs; }, [fetchLogs]);
 
-  const displayed = logs.filter((l) =>
-    !search || [l.full_name, l.doc_number, l.pass_badge_no, l.company_name, l.mobile_number]
-      .some((f) => f?.toLowerCase().includes(search.toLowerCase()))
-  );
+  // Fetch on mount and whenever a filter changes.
+  useEffect(() => { fetchLogs(); }, [fetchLogs]);
+
+  // Realtime: refetch ONLY when the table actually changes (check-in, check-out,
+  // extension) — one websocket instead of a query every 10 seconds.
+  useEffect(() => {
+    const channel = supabase.channel('admin-logs-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hotel_security_logs' },
+        () => fetchLogsRef.current())
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  // Client-only clock (no API) so the overstay colour advances between events.
+  useEffect(() => {
+    const t = setInterval(() => setCurrentTime(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Overstay state for a row: past the allowed (or extended) time. A 15-minute
+  // grace window shows amber; beyond that it turns hard red.
+  const overstayInfo = (l) => {
+    const allowedH = Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2;
+    const elapsedH = l.status === 'inside'
+      ? (currentTime - new Date(l.check_in_time).getTime()) / 3600000 : 0;
+    return {
+      allowedH,
+      elapsedH,
+      isOver:    l.status === 'inside' && elapsedH > allowedH,
+      isOverRed: l.status === 'inside' && elapsedH > allowedH + 0.25,
+    };
+  };
+
+  const displayed = logs.filter((l) => {
+    const matchesSearch = !search || [l.full_name, l.doc_number, l.pass_badge_no, l.company_name, l.mobile_number]
+      .some((f) => f?.toLowerCase().includes(search.toLowerCase()));
+    if (!matchesSearch) return false;
+    if (status === 'overstay') return overstayInfo(l).isOver;
+    return true;
+  });
 
   const handleExtendStay = async (e) => {
     e.preventDefault();
@@ -672,6 +705,7 @@ function LogTable({ notify }) {
           <option value="all">All Status</option>
           <option value="inside">Inside</option>
           <option value="checked_out">Checked Out</option>
+          <option value="overstay">⚠️ Overstay</option>
         </select>
         <select value={ttype} onChange={(e) => setTtype(e.target.value)} className={`${INPUT} w-36 appearance-none`}>
           <option value="all">All Types</option>
@@ -702,10 +736,15 @@ function LogTable({ notify }) {
             <tbody>
               {displayed.map((l) => {
                 const info = parseLogDetails(l);
+                const over = overstayInfo(l);
 
                 return (
                 <tr key={l.id} className={`border-b transition ${
-                  info.isExtended
+                  over.isOverRed
+                    ? 'border-red-500/40 bg-red-950/30 hover:bg-red-900/30'
+                    : over.isOver
+                    ? 'border-amber-500/40 bg-amber-950/20 hover:bg-amber-900/20'
+                    : info.isExtended
                     ? 'border-cyan-500/30 bg-cyan-950/20 hover:bg-cyan-900/30'
                     : 'border-white/5 hover:bg-white/5'
                 }`}>
@@ -764,6 +803,15 @@ function LogTable({ notify }) {
                     <span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[l.status]||'bg-slate-700/40 text-slate-400 border-slate-600/30'}`}>
                       {l.status.replace('_',' ')}
                     </span>
+                    {over.isOverRed ? (
+                      <span className="mt-0.5 block text-[8px] font-extrabold text-red-300 animate-pulse">
+                        ⚠️ OVERSTAY {over.elapsedH.toFixed(1)}h / {over.allowedH}h
+                      </span>
+                    ) : over.isOver ? (
+                      <span className="mt-0.5 block text-[8px] font-bold text-amber-300">
+                        ⏱️ Over (grace) {over.elapsedH.toFixed(1)}h / {over.allowedH}h
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2.5 text-xs">
                     {l.status === 'inside' ? (
