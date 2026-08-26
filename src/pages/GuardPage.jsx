@@ -389,6 +389,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const barcodeDetectorRef = useRef(null);
   const preserveScanFields = useRef(false);
 
+  /* ── Regular-visitor auto-fill suggestions ── */
+  const [docSuggestions, setDocSuggestions] = useState([]);
+
   /* ── Derived ── */
   const currentTrafficConfig = TRAFFIC_TYPES.find((t) => t.id === trafficType) || TRAFFIC_TYPES[0];
   const requiresPass = currentTrafficConfig.requiresPass;
@@ -458,34 +461,75 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     setDeptSelection(''); setManualDept(''); setWhomToVisit('');
     setVisitorPurpose(''); setManualVisitorPurpose('');
     setContractorWorkType(''); setManualWorkType(''); setWorkPermitNumber(''); setAreaOfWork(''); setWorkDescription('');
-    setSelectedPass(''); setIsIdExpired(false); setStatusMsg('');
+    setSelectedPass(''); setIsIdExpired(false); setStatusMsg(''); setDocSuggestions([]);
     const t = TRAFFIC_TYPES.find((x) => x.id === trafficType);
     if (t) setAllowedHours(t.hours);
     if (t?.requiresPass) fetchPasses(t.passType);
   };
 
-  /* ── Auto-lookup from history ── */
+  /* ── Regular-visitor auto-fill ── */
+  // Overwrite the form with a saved history record (used by both the unique
+  // instant match and clicking a suggestion). Fills the COMPLETE ID number too.
+  const applyHistoryRecord = useCallback((rec) => {
+    if (!rec) return;
+    if (rec.doc_number)     setDocNumber(rec.doc_number);
+    if (rec.full_name)      setFullName(rec.full_name);
+    if (rec.mobile_number)  setMobileNumber(rec.mobile_number);
+    if (rec.company_name)   setCompanyName(rec.company_name);
+    if (rec.vehicle_plate)  setVehiclePlate(rec.vehicle_plate);
+    if (rec.nationality)    setNationality(rec.nationality);
+    if (rec.id_expiry_date) { setIdExpiryDate(rec.id_expiry_date); setIsIdExpired(expiryIsPast(rec.id_expiry_date)); }
+    setDocSuggestions([]);
+  }, []);
+
+  // After a scan, pull the saved contact / company / vehicle for a returning
+  // person (OCR reads identity fields off the document, but not these).
+  const fillFromHistoryByDoc = useCallback(async (docNum) => {
+    const safe = String(docNum || '').replace(/[^A-Za-z0-9 +_-]/g, '').trim();
+    if (safe.length < 4) return;
+    const { data } = await supabase.from('hotel_security_logs')
+      .select('full_name,mobile_number,company_name,vehicle_plate,nationality,id_expiry_date')
+      .ilike('doc_number', `%${safe}%`)
+      .order('check_in_time', { ascending: false }).limit(1).maybeSingle();
+    if (!data) return;
+    if (data.company_name)  setCompanyName(data.company_name);
+    if (data.mobile_number) setMobileNumber(data.mobile_number);
+    if (data.vehicle_plate) setVehiclePlate(data.vehicle_plate);
+    setFullName((cur) => cur || data.full_name || '');
+    setNationality((cur) => cur || data.nationality || '');
+  }, []);
+
+  /* ── Auto-lookup from history as the guard types ── */
   const handleDocSearch = useCallback(async (val) => {
     if (preserveScanFields.current) { preserveScanFields.current = false; return; }
-    if (val.length < 4) return;
+    if (val.length < 4) { setDocSuggestions([]); return; }
     // Sanitize before interpolating into a PostgREST .or() filter: strip any
     // characters (commas, parentheses, quotes…) that could break out of the
     // filter string and inject extra conditions.
     const safe = val.replace(/[^A-Za-z0-9 +_-]/g, '').trim();
-    if (safe.length < 3) return;
+    if (safe.length < 3) { setDocSuggestions([]); return; }
     const { data } = await supabase.from('hotel_security_logs')
-      .select('full_name,mobile_number,company_name,vehicle_plate,nationality,id_expiry_date')
+      .select('doc_number,full_name,mobile_number,company_name,vehicle_plate,nationality,id_expiry_date')
       .or(`doc_number.ilike.%${safe}%,mobile_number.ilike.%${safe}%,vehicle_plate.ilike.%${safe}%`)
-      .order('check_in_time', { ascending: false }).limit(1).maybeSingle();
-    if (data) {
-      if (data.full_name)    setFullName(data.full_name);
-      if (data.mobile_number)setMobileNumber(data.mobile_number);
-      if (data.company_name) setCompanyName(data.company_name);
-      if (data.vehicle_plate)setVehiclePlate(data.vehicle_plate);
-      if (data.nationality)  setNationality(data.nationality);
-      if (data.id_expiry_date){ setIdExpiryDate(data.id_expiry_date); setIsIdExpired(expiryIsPast(data.id_expiry_date)); }
+      .order('check_in_time', { ascending: false }).limit(20);
+    if (!data || data.length === 0) { setDocSuggestions([]); return; }
+    // Collapse to the most-recent record per distinct person (by document no.).
+    const seen = new Set();
+    const people = [];
+    for (const r of data) {
+      const key = r.doc_number || `${r.full_name}|${r.mobile_number}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      people.push(r);
     }
-  }, []);
+    if (people.length === 1) {
+      // Unique returning person → fill everything instantly, incl. the full ID.
+      applyHistoryRecord(people[0]);
+    } else {
+      // Several matches → show a pick-list; the guard taps the right one.
+      setDocSuggestions(people.slice(0, 6));
+    }
+  }, [applyHistoryRecord]);
 
   /* ── Apply OCR extracted fields ── */
   const applyExtractedFields = useCallback(({ documentNumber, fullName: n, nationality: nat, expiryDate, docType }) => {
@@ -576,13 +620,14 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const applyScanResult = useCallback((parsed) => {
     if (!parsed?.documentNumber && !parsed?.fullName) return;
     const exp = applyExtractedFields({ ...parsed, documentNumber: parsed.documentNumber });
+    if (parsed.documentNumber) fillFromHistoryByDoc(parsed.documentNumber);
     beep(!exp);
     if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
     setViewfinderState('captured');
     setStatusMsg(exp ? '⚠️ EXPIRED DOCUMENT' : 'Document locked.');
     notify(exp ? '⚠️ Document EXPIRED' : 'Document scanned', exp ? 'error' : 'success');
     setTimeout(() => closeDocumentScanner(), 400);
-  }, [applyExtractedFields, beep, closeDocumentScanner, notify]);
+  }, [applyExtractedFields, fillFromHistoryByDoc, beep, closeDocumentScanner, notify]);
 
   const captureAndRead = useCallback(async () => {
     const v = videoRef.current;
@@ -609,6 +654,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           documentNumber: ext.docNumber, fullName: ext.fullName,
           nationality: ext.nationality, expiryDate: ext.expiryDate, docType: ext.docType,
         });
+        if (ext.docNumber) fillFromHistoryByDoc(ext.docNumber);
         setViewfinderState('captured'); setCaptureStatus('success'); setScannerMsg('');
         beep(!exp);
         if ('vibrate' in navigator) navigator.vibrate(exp ? [80, 60, 80] : [40, 30, 80]);
@@ -621,7 +667,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     } catch (e) {
       setCaptureStatus('empty'); beep(false); setScannerMsg(`Error: ${e?.message}`);
     }
-  }, [applyExtractedFields, beep, closeDocumentScanner, notify]);
+  }, [applyExtractedFields, fillFromHistoryByDoc, beep, closeDocumentScanner, notify]);
 
   /* ── Check-out (Strict Overstay Guard Lock) ── */
   const handleCheckOut = useCallback(async (id, passNum) => {
@@ -1038,12 +1084,32 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           {/* ── Form fields ── */}
           <form onSubmit={handleCheckIn} className="space-y-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
+              <div className="relative">
                 <label className={LABEL}>
                   Doc # / ID Number <span className="text-red-400">*</span>
                 </label>
                 <input value={docNumber} onChange={(e) => { setDocNumber(e.target.value); handleDocSearch(e.target.value); }}
-                  placeholder="784-1985-..." className={INPUT} required />
+                  placeholder="784-1985-..." className={INPUT} required autoComplete="off" />
+                {docSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 z-30 mt-1 overflow-hidden rounded-xl border border-white/10 bg-slate-900 shadow-2xl shadow-black/60">
+                    <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 border-b border-white/5">
+                      Returning — tap to auto-fill
+                    </p>
+                    {docSuggestions.map((s, i) => (
+                      <button
+                        key={s.doc_number || i}
+                        type="button"
+                        onClick={() => applyHistoryRecord(s)}
+                        className="block w-full text-left px-3 py-2 transition hover:bg-indigo-600/20 border-b border-white/5 last:border-0"
+                      >
+                        <div className="text-sm font-semibold text-white truncate">{s.full_name || '—'}</div>
+                        <div className="text-[11px] font-mono text-slate-400 truncate">
+                          {s.doc_number}{s.company_name ? ` • ${s.company_name}` : ''}{s.mobile_number ? ` • ${s.mobile_number}` : ''}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className={LABEL}>
