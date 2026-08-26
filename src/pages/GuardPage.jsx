@@ -1731,6 +1731,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
               <option value="all">All Statuses</option>
               <option value="inside">Currently Inside</option>
               <option value="checked_out">Checked Out</option>
+              <option value="overstay">⚠️ Overstay</option>
             </select>
           </div>
 
@@ -1740,7 +1741,12 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
               const matchesSearch = !logSearch || [l.full_name, l.pass_badge_no, l.company_name, l.doc_number, l.vehicle_plate, l.mobile_number]
                 .some((f) => f?.toLowerCase().includes(logSearch.toLowerCase()));
               const matchesType = logFilterType === 'all' || l.traffic_type === logFilterType;
-              const matchesStatus = logFilterStatus === 'all' || l.status === logFilterStatus;
+              const isOverstayed = l.status === 'inside'
+                && (currentTime - new Date(l.check_in_time).getTime()) / 3600000
+                   > (Number(l.allowed_hours) > 0 ? Number(l.allowed_hours) : 2);
+              const matchesStatus = logFilterStatus === 'all'
+                ? true
+                : logFilterStatus === 'overstay' ? isOverstayed : l.status === logFilterStatus;
               return matchesSearch && matchesType && matchesStatus;
             });
 
