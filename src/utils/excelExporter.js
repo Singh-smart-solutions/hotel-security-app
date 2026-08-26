@@ -1,4 +1,5 @@
 import XLSX from 'xlsx-js-style';
+import JSZip from 'jszip';
 import { supabase } from '../supabaseClient';
 import { parseLogDetails, escapeSpreadsheetValue } from './logFormatter';
 
@@ -697,9 +698,57 @@ export async function generateProfessionalExcelReport(initialLogs, notify) {
   XLSX.utils.book_append_sheet(wb, wsCasuals, 'Casuals');
 
   const filename = `Visitor-Access-Security-Log-${new Date().toISOString().slice(0, 10)}.xlsx`;
-  XLSX.writeFile(wb, filename);
+  await writeWorkbookWithFrozenHeaders(wb, filename);
 
   if (notify) {
     notify(`✅ Downloaded complete Security Log Report (${allMasterLogs.length} total entries)`, 'success');
   }
+}
+
+// xlsx-js-style does not emit the <pane> element, so the frozen-header
+// setting on each worksheet's `!views` is silently dropped. We write the
+// workbook to memory, then post-process the .xlsx (a zip) to inject a real
+// frozen <pane> into every sheet — driven by the ySplit each worksheet
+// already declares — so the header rows stay locked while scrolling.
+async function writeWorkbookWithFrozenHeaders(wb, filename) {
+  const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  const zip = await JSZip.loadAsync(out);
+
+  // wb.SheetNames[i] is written to xl/worksheets/sheet{i+1}.xml, in order.
+  for (let i = 0; i < wb.SheetNames.length; i++) {
+    const ws = wb.Sheets[wb.SheetNames[i]];
+    const view = ws && ws['!views'] && ws['!views'][0];
+    const ySplit = view && view.ySplit;
+    if (!ySplit || ySplit < 1) continue;
+
+    const path = `xl/worksheets/sheet${i + 1}.xml`;
+    const file = zip.file(path);
+    if (!file) continue;
+
+    let xml = await file.async('string');
+    const topLeftCell = (view && view.topLeftCell) || `A${ySplit + 1}`;
+    const pane = `<pane ySplit="${ySplit}" topLeftCell="${topLeftCell}" activePane="bottomLeft" state="frozen"/>`;
+
+    if (/<sheetView\b[^>]*\/>/.test(xml)) {
+      // Self-closing <sheetView .../> — expand it and nest the pane inside.
+      xml = xml.replace(/(<sheetView\b[^>]*)\/>/, `$1>${pane}</sheetView>`);
+    } else {
+      // Open <sheetView ...> … </sheetView> — pane must be its first child.
+      xml = xml.replace(/(<sheetView\b[^>]*>)/, `$1${pane}`);
+    }
+    zip.file(path, xml);
+  }
+
+  const blob = await zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
