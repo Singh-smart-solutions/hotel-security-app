@@ -710,7 +710,7 @@ export async function generateProfessionalExcelReport(initialLogs, notify) {
 // workbook to memory, then post-process the .xlsx (a zip) to inject a real
 // frozen <pane> into every sheet — driven by the ySplit each worksheet
 // already declares — so the header rows stay locked while scrolling.
-async function writeWorkbookWithFrozenHeaders(wb, filename) {
+export async function writeWorkbookWithFrozenHeaders(wb, filename) {
   const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
   const zip = await JSZip.loadAsync(out);
 
