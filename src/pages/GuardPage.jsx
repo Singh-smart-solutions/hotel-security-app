@@ -449,6 +449,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [nfcCheckoutMode, setNfcCheckoutMode] = useState(false);
   // Latest check-in helpers, so the once-bound NFC scan uses current form data.
   const checkInFns = useRef({});
+  const nfcScanAbort = useRef(null);                  // lets the NFC toggle stop scanning
+  const lastNfcRead  = useRef({ uid: null, at: 0 });  // debounce one physical tap's burst
 
   /* ── Live Clock & Notification Tracking ── */
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -766,16 +768,28 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
   /* ── NFC check-in (pass picker) ── */
   const startNfcScan = useCallback(async () => {
+    // Toggle: if scanning is already on, this click turns it off.
+    if (nfcActive) {
+      if (nfcScanAbort.current) { nfcScanAbort.current.abort(); nfcScanAbort.current = null; }
+      setNfcActive(false);
+      return;
+    }
     if (!('NDEFReader' in window)) {
       notify('NFC not available. Use Android Chrome.', 'info'); return;
     }
     try {
       const ndef = new window.NDEFReader();
-      await ndef.scan();
+      const ctrl = new AbortController();
+      nfcScanAbort.current = ctrl;
+      await ndef.scan({ signal: ctrl.signal });
       setNfcActive(true);
-      notify('NFC ready — hold badge to back of phone', 'info');
+      notify('NFC on — tap badges to check in / out. Tap the button again to stop.', 'info');
       ndef.onreading = async ({ serialNumber }) => {
         const uid = serialNumber.replace(/:/g, '').toUpperCase();
+        // Ignore the burst of repeat reads a single physical tap produces.
+        const now = Date.now();
+        if (lastNfcRead.current.uid === uid && now - lastNfcRead.current.at < 1500) return;
+        lastNfcRead.current = { uid, at: now };
         const { data: matches } = await supabase.from('passes').select('*').eq('nfc_uid', uid).order('pass_number').limit(1);
         const pass = matches && matches[0];
         if (!pass) { notify(`NFC tag not registered (${uid}). Link in Manager → Passes.`, 'info'); return; }
@@ -784,7 +798,6 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           const tt = TRAFFIC_TYPES.find((t) => t.passType === pass.pass_type);
           if (tt) setTrafficType(tt.id);
           if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
-          setNfcActive(false);
           // If the visitor's details are already filled in, the tap also
           // confirms the check-in (no button needed) — matching checkout.
           // Otherwise it just selects the pass so the guard can fill details.
@@ -795,14 +808,16 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           }
         } else if (pass.status === 'in_use') {
           const al = insideLogs.find((l) => l.pass_badge_no === pass.pass_number);
-          if (al) { await handleCheckOut(al.id, pass.pass_number); setNfcActive(false); }
+          if (al) { await handleCheckOut(al.id, pass.pass_number); }
           else { notify(`Pass ${pass.pass_number} in use but not in this shift. Check manually.`, 'info'); }
         }
       };
     } catch (e) {
-      setNfcActive(false); notify('NFC error: ' + e.message, 'error');
+      nfcScanAbort.current = null;
+      setNfcActive(false);
+      if (e.name !== 'AbortError') notify('NFC error: ' + e.message, 'error');
     }
-  }, [insideLogs, notify]);
+  }, [nfcActive, insideLogs, notify]);
 
   /* ── NFC checkout mode (active passes card) ── */
   const startNfcCheckout = useCallback(async () => {
