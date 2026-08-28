@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Nfc, Radio, AlertTriangle, CheckCircle2, Loader2, Trash2, Smartphone } from 'lucide-react';
+import { Nfc, Radio, AlertTriangle, CheckCircle2, Loader2, Trash2, Smartphone, PenLine, Eraser } from 'lucide-react';
 
 /*
   NFC tag test screen  —  /nfc-test
@@ -37,6 +37,8 @@ export default function NfcTestPage({ notify }) {
   const [scanning, setScanning] = useState(false);
   const [reads, setReads] = useState([]);
   const abortRef = useRef(null);
+  const [writeValue, setWriteValue] = useState('PASS-14');
+  const [writing, setWriting] = useState(false);
 
   const stop = useCallback(() => {
     if (abortRef.current) {
@@ -89,6 +91,48 @@ export default function NfcTestPage({ notify }) {
       if (notify) notify(msg, 'error');
     }
   }, [supported, notify]);
+
+  // Write a text label onto the tag (e.g. "PASS-14"). The promise resolves
+  // once a tag is tapped and written. The factory serial number is NOT
+  // changed by this — only the data stored on the tag.
+  const writeTag = useCallback(async () => {
+    if (!supported || writing) return;
+    const value = writeValue.trim();
+    if (!value) { if (notify) notify('Type a label to write first', 'error'); return; }
+    setWriting(true);
+    if (notify) notify('Hold the tag to the phone to write…', 'info');
+    try {
+      const writer = new window.NDEFReader();
+      await writer.write({ records: [{ recordType: 'text', data: value }] });
+      if (notify) notify(`Written "${value}" to the tag ✓`, 'success');
+    } catch (err) {
+      const msg = err && err.name === 'NotAllowedError'
+        ? 'NFC permission was blocked. Allow it and try again.'
+        : `Write failed: ${err?.message || err}`;
+      if (notify) notify(msg, 'error');
+    } finally {
+      setWriting(false);
+    }
+  }, [supported, writing, writeValue, notify]);
+
+  // Erase the tag's stored data (removes the old YouTube link, etc.).
+  const eraseTag = useCallback(async () => {
+    if (!supported || writing) return;
+    setWriting(true);
+    if (notify) notify('Hold the tag to the phone to erase…', 'info');
+    try {
+      const writer = new window.NDEFReader();
+      await writer.write({ records: [{ recordType: 'empty' }] });
+      if (notify) notify('Tag erased ✓', 'success');
+    } catch (err) {
+      const msg = err && err.name === 'NotAllowedError'
+        ? 'NFC permission was blocked. Allow it and try again.'
+        : `Erase failed: ${err?.message || err}`;
+      if (notify) notify(msg, 'error');
+    } finally {
+      setWriting(false);
+    }
+  }, [supported, writing, notify]);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
@@ -144,6 +188,38 @@ export default function NfcTestPage({ notify }) {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* Optional: write a pass label onto the tag, or erase old data */}
+            <div className={`${CARD} mt-5 p-6`}>
+              <div className="mb-2 flex items-center gap-2 text-slate-200">
+                <PenLine className="h-4 w-4 text-indigo-400" />
+                <h2 className="text-sm font-bold">Write / erase tag (optional)</h2>
+              </div>
+              <p className="text-xs leading-relaxed text-slate-400">
+                Not required — the app identifies a tag by its fixed serial number.
+                Use this only to put a label on the tag, or to wipe the old YouTube link.
+                The serial number never changes.
+              </p>
+              <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Label to write</label>
+              <input
+                value={writeValue}
+                onChange={(e) => setWriteValue(e.target.value)}
+                placeholder="e.g. PASS-14"
+                className="mt-1.5 w-full rounded-xl border border-white/10 bg-slate-950/70 px-3.5 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500/60 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+              />
+              <div className="mt-4 flex gap-3">
+                <button onClick={writeTag} disabled={writing} className={`${BTN_PRI} flex-1 py-3 text-sm`}>
+                  {writing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
+                  Write to tag
+                </button>
+                <button onClick={eraseTag} disabled={writing} className={`${BTN_SEC} px-4 py-3 text-sm`}>
+                  <Eraser className="h-4 w-4" /> Erase
+                </button>
+              </div>
+              <p className="mt-3 text-[11px] text-slate-500">
+                After pressing, hold the tag to the back of the phone until you see a confirmation.
+              </p>
             </div>
 
             <div className="mt-5 space-y-3">
