@@ -452,9 +452,19 @@ function PassManager({ session, notify }) {
       await ndef.scan();
       setNfcPassId(passId); setNfcActive(true);
       notify('Hold the NFC badge to the back of this phone…', 'info');
+      let linked = false;
       ndef.onreading = async ({ serialNumber }) => {
+        if (linked) return; // a single physical tap can fire several reads
+        linked = true;
         const uid = serialNumber.replace(/:/g, '').toUpperCase();
-        await supabase.from('passes').update({ nfc_uid: uid }).eq('id', passId);
+        // A tag maps to exactly ONE pass — clear it off any other pass first,
+        // so it can never end up linked to several (which broke the lookup).
+        await supabase.from('passes').update({ nfc_uid: null }).eq('nfc_uid', uid).neq('id', passId);
+        const { error } = await supabase.from('passes').update({ nfc_uid: uid }).eq('id', passId);
+        if (error) {
+          linked = false; setNfcPassId(null); setNfcActive(false);
+          return notify('Link failed: ' + error.message, 'error');
+        }
         notify(`NFC UID ${uid} linked to pass`, 'success');
         setNfcPassId(null); setNfcActive(false); fetchPasses();
       };

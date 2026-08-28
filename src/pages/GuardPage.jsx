@@ -776,7 +776,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       notify('NFC ready — hold badge to back of phone', 'info');
       ndef.onreading = async ({ serialNumber }) => {
         const uid = serialNumber.replace(/:/g, '').toUpperCase();
-        const { data: pass } = await supabase.from('passes').select('*').eq('nfc_uid', uid).maybeSingle();
+        const { data: matches } = await supabase.from('passes').select('*').eq('nfc_uid', uid).order('pass_number').limit(1);
+        const pass = matches && matches[0];
         if (!pass) { notify(`NFC tag not registered (${uid}). Link in Manager → Passes.`, 'info'); return; }
         if (pass.status === 'available') {
           setSelectedPass(pass.pass_number);
@@ -817,7 +818,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
       ndef.onreading = async ({ serialNumber }) => {
         const uid = serialNumber.replace(/:/g, '').toUpperCase();
-        const { data: pass } = await supabase.from('passes').select('*').eq('nfc_uid', uid).maybeSingle();
+        const { data: matches } = await supabase.from('passes').select('*').eq('nfc_uid', uid).order('pass_number').limit(1);
+        const pass = matches && matches[0];
         if (!pass) {
           notify(`NFC tag not registered (${uid}). Link in Manager → Passes.`, 'info');
           if ('vibrate' in navigator) navigator.vibrate([80, 60, 80]);
