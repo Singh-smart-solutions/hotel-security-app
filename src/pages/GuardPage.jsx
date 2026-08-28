@@ -447,6 +447,8 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   /* ── NFC state ── */
   const [nfcActive,       setNfcActive]       = useState(false);
   const [nfcCheckoutMode, setNfcCheckoutMode] = useState(false);
+  // Latest check-in helpers, so the once-bound NFC scan uses current form data.
+  const checkInFns = useRef({});
 
   /* ── Live Clock & Notification Tracking ── */
   const [currentTime, setCurrentTime] = useState(Date.now());
@@ -780,9 +782,16 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
           setSelectedPass(pass.pass_number);
           const tt = TRAFFIC_TYPES.find((t) => t.passType === pass.pass_type);
           if (tt) setTrafficType(tt.id);
-          notify(`Pass ${pass.pass_number} ready — fill visitor details`, 'success');
           if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
           setNfcActive(false);
+          // If the visitor's details are already filled in, the tap also
+          // confirms the check-in (no button needed) — matching checkout.
+          // Otherwise it just selects the pass so the guard can fill details.
+          if (checkInFns.current.isReadyToCheckIn && checkInFns.current.isReadyToCheckIn(pass.pass_number)) {
+            await checkInFns.current.handleCheckIn(null, pass.pass_number);
+          } else {
+            notify(`Pass ${pass.pass_number} ready — fill visitor details, then tap the badge again to check in`, 'success');
+          }
         } else if (pass.status === 'in_use') {
           const al = insideLogs.find((l) => l.pass_badge_no === pass.pass_number);
           if (al) { await handleCheckOut(al.id, pass.pass_number); setNfcActive(false); }
@@ -852,8 +861,30 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   }, [notify]); // handleCheckOut captured from closure — safe, defined by first render paint
 
   /* ── Check-in with strict completeness validation ── */
-  const handleCheckIn = async (e) => {
-    e.preventDefault();
+  // True only when every required field for the current traffic type is filled
+  // (and a pass is available where one is needed). Used to decide whether an
+  // NFC tap should auto-confirm the check-in. No side effects / no toasts.
+  const isReadyToCheckIn = (passNum) => {
+    if (!fullName.trim() || !docNumber.trim() || !companyName.trim()
+      || !mobileNumber.trim() || !vehiclePlate.trim()) return false;
+    const baseDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
+    if (!baseDept) return false;
+    if (trafficType === 'hotel_guest_visitor') {
+      const purp = visitorPurpose === 'others' ? manualVisitorPurpose.trim() : visitorPurpose.trim();
+      if (!whomToVisit.trim() || !purp) return false;
+    }
+    if (trafficType === 'contractor_engineer') {
+      const work = contractorWorkType === 'others' ? manualWorkType.trim() : contractorWorkType.trim();
+      if (!work || !workPermitNumber.trim() || !areaOfWork.trim() || !workDescription.trim()) return false;
+    }
+    if (requiresPass && !passNum) return false;
+    if (isIdExpired) return false;
+    return true;
+  };
+
+  const handleCheckIn = async (e, passOverride) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const activePass = passOverride != null ? passOverride : selectedPass;
     if (!fullName.trim()) return notify('Full Name is required', 'error');
     if (!docNumber.trim()) return notify('Document / Emirates ID number is required', 'error');
     if (!companyName.trim()) return notify('Company / Organization / Agency is required', 'error');
@@ -876,7 +907,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       if (!workDescription.trim()) return notify('Description of work is required', 'error');
     }
 
-    if (requiresPass && !selectedPass) {
+    if (requiresPass && !activePass) {
       return notify('Please select or tap a pass badge first', 'error');
     }
     if (isIdExpired) return notify('⛔ ACCESS DENIED — Document is expired', 'error');
@@ -900,7 +931,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       purpose = `Casual Shift (${allowedHours}h)`;
     }
 
-    const assignedBadge = requiresPass ? selectedPass : 'CASUAL';
+    const assignedBadge = requiresPass ? activePass : 'CASUAL';
 
     const { data: result, error: logErr } = await supabase.rpc('check_in_visitor', {
       p: {
@@ -930,10 +961,17 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
     beep(true);
     if ('vibrate' in navigator) navigator.vibrate([40, 30, 80]);
-    notify(`✅ ${fullName} checked in — ${requiresPass ? `Pass ${selectedPass} issued` : 'Casual Logged'}`, 'success');
+    notify(`✅ ${fullName} checked in — ${requiresPass ? `Pass ${activePass} issued` : 'Casual Logged'}`, 'success');
     resetForm();
     setSubmitting(false);
   };
+
+  // Keep the NFC scan handler (bound once when scanning starts) pointed at the
+  // current-render check-in helpers, so it acts on the latest form data.
+  useEffect(() => {
+    checkInFns.current.isReadyToCheckIn = isReadyToCheckIn;
+    checkInFns.current.handleCheckIn = handleCheckIn;
+  });
 
 
 
