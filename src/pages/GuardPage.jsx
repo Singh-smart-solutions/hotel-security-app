@@ -425,6 +425,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   const [isIdExpired,   setIsIdExpired]   = useState(false);
   const [statusMsg,     setStatusMsg]     = useState('');
   const [submitting,    setSubmitting]    = useState(false);
+  const [blacklistHit,  setBlacklistHit]  = useState(null); // manager blacklist match
 
   /* ── Data state ── */
   const [logs,               setLogs]               = useState([]);
@@ -877,8 +878,30 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notify]); // handleCheckOut captured from closure — safe, defined by first render paint
 
+  /* ── Manager blacklist: block flagged people at the gate ── */
+  useEffect(() => {
+    const doc = docNumber.trim();
+    const mob = mobileNumber.trim();
+    if (!doc && !mob) { setBlacklistHit(null); return; }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const clean = (s) => s.replace(/[^A-Za-z0-9+ _-]/g, '');
+      const ors = [];
+      if (doc) ors.push(`doc_number.ilike.${clean(doc)}`);
+      if (mob) ors.push(`mobile_number.eq.${clean(mob)}`);
+      if (!ors.length) { setBlacklistHit(null); return; }
+      const { data } = await supabase.from('blacklist')
+        .select('reason, blacklisted_at, full_name')
+        .eq('is_active', true)
+        .or(ors.join(','))
+        .order('blacklisted_at', { ascending: false })
+        .limit(1);
+      if (!cancelled) setBlacklistHit((data && data[0]) || null);
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [docNumber, mobileNumber]);
+
   /* ── Check-in with strict completeness validation ── */
-  // True only when every required field for the current traffic type is filled
   // (and a pass is available where one is needed). Used to decide whether an
   // NFC tap should auto-confirm the check-in. No side effects / no toasts.
   const isReadyToCheckIn = (passNum) => {
@@ -896,12 +919,14 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
     }
     if (requiresPass && !passNum) return false;
     if (isIdExpired) return false;
+    if (blacklistHit) return false;
     return true;
   };
 
   const handleCheckIn = async (e, passOverride) => {
     if (e && e.preventDefault) e.preventDefault();
     const activePass = passOverride != null ? passOverride : selectedPass;
+    if (blacklistHit) return notify('⛔ BLACKLISTED — entry blocked by manager. Remove from blacklist to allow.', 'error');
     if (!fullName.trim()) return notify('Full Name is required', 'error');
     if (!docNumber.trim()) return notify('Document / Emirates ID number is required', 'error');
     if (!companyName.trim()) return notify('Company / Organization / Agency is required', 'error');
@@ -1616,6 +1641,22 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
 
             {statusMsg && <div className="font-mono text-xs text-indigo-400">{statusMsg}</div>}
 
+            {blacklistHit && (
+              <div className="rounded-xl border border-red-500/50 bg-red-950/50 px-4 py-3">
+                <div className="flex items-center gap-2 text-red-300">
+                  <UserX className="h-5 w-5" />
+                  <span className="text-sm font-bold uppercase tracking-wide">Blacklisted — entry blocked</span>
+                </div>
+                <p className="mt-1.5 text-sm text-red-100">
+                  {blacklistHit.full_name ? <strong>{blacklistHit.full_name}</strong> : 'This person'} is blacklisted by management.
+                </p>
+                <p className="mt-1 text-xs text-red-200/90">
+                  Reason: {blacklistHit.reason || '—'}
+                  {blacklistHit.blacklisted_at ? ` · since ${new Date(blacklistHit.blacklisted_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}` : ''}
+                </p>
+                <p className="mt-1.5 text-[11px] text-red-300/70">Only a manager can remove this person from the blacklist.</p>
+              </div>
+            )}
             {(() => {
               const effectiveDept = deptSelection === 'others' ? manualDept.trim() : hostDept.trim();
               const effectiveVisitorPurp = visitorPurpose === 'others' ? manualVisitorPurpose.trim() : visitorPurpose.trim();
@@ -1624,14 +1665,14 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
               const isMissingContractorData = trafficType === 'contractor_engineer' && (!effectiveContractorWork || !workPermitNumber.trim() || !areaOfWork.trim() || !workDescription.trim());
               const isMissingData = !fullName.trim() || !docNumber.trim() || !companyName.trim() || !mobileNumber.trim() || !vehiclePlate.trim() || !effectiveDept || isMissingVisitorData || isMissingContractorData;
               const isMissingPass = requiresPass && !selectedPass;
-              const isDisabled = submitting || isIdExpired || isMissingPass || isMissingData;
+              const isDisabled = submitting || isIdExpired || isMissingPass || isMissingData || !!blacklistHit;
 
               return (
                 <button
                   type="submit"
                   disabled={isDisabled}
                   className={`${BTN_PRI} w-full py-3 text-sm ${
-                    isIdExpired
+                    isIdExpired || blacklistHit
                       ? '!from-red-900 !to-red-900 !opacity-40 cursor-not-allowed'
                       : isDisabled
                       ? '!from-slate-700 !to-slate-800 !opacity-60 cursor-not-allowed'
@@ -1643,7 +1684,9 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                   ) : (
                     <UserCheck className="h-4 w-4" />
                   )}
-                  {isIdExpired
+                  {blacklistHit
+                    ? '⛔ BLACKLISTED — Entry Blocked'
+                    : isIdExpired
                     ? 'Check-In Blocked — Expired Document'
                     : isMissingData
                     ? 'Fill All Required Fields (*)'
