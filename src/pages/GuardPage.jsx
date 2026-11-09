@@ -891,7 +891,7 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
       if (mob) ors.push(`mobile_number.eq.${clean(mob)}`);
       if (!ors.length) { setBlacklistHit(null); return; }
       const { data } = await supabase.from('blacklist')
-        .select('reason, blacklisted_at, full_name')
+        .select('reason, blacklisted_at, full_name, photo')
         .eq('is_active', true)
         .or(ors.join(','))
         .order('blacklisted_at', { ascending: false })
@@ -1650,6 +1650,10 @@ function GuardTerminal({ guard, shift, onEndShift, onLogout, notify }) {
                 <p className="mt-1.5 text-sm text-red-100">
                   {blacklistHit.full_name ? <strong>{blacklistHit.full_name}</strong> : 'This person'} is blacklisted by management.
                 </p>
+                {blacklistHit.photo && (
+                  <img src={blacklistHit.photo} alt="blacklisted person"
+                    className="mt-2 h-28 w-28 rounded-lg border border-red-500/40 object-cover" />
+                )}
                 <p className="mt-1 text-xs text-red-200/90">
                   Reason: {blacklistHit.reason || '—'}
                   {blacklistHit.blacklisted_at ? ` · since ${new Date(blacklistHit.blacklisted_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}` : ''}

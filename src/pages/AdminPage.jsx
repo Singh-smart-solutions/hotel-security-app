@@ -8,7 +8,7 @@ import {
   Shield, Users, Tag, FileText, AlertTriangle, LogOut,
   Plus, Trash2, Eye, EyeOff, RefreshCw, Download, Wifi,
   CheckCircle, CheckCircle2, XCircle, Clock, Loader2, ChevronDown, Search,
-  BarChart2, Phone, Edit2, Save, X, Key, Smartphone, Unlock, ClipboardList, Ban, UserX,
+  BarChart2, Phone, Edit2, Save, X, Key, Smartphone, Unlock, ClipboardList, Ban, UserX, Camera,
 } from 'lucide-react';
 
 /* ── Design tokens (violet/purple accent for admin) ─────── */
@@ -1106,7 +1106,30 @@ function BlacklistManager({ session, notify }) {
   const [fullName, setFullName] = useState('');
   const [mobile, setMobile] = useState('');
   const [reason, setReason] = useState('');
+  const [photo, setPhoto] = useState('');   // compressed JPEG data URL
   const [saving, setSaving] = useState(false);
+
+  // Compress a chosen photo to a small JPEG data URL (max 480px, ~quality 0.7)
+  // so it stays tiny on the blacklist row.
+  const onPhotoPick = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 480;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        setPhoto(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -1130,12 +1153,13 @@ function BlacklistManager({ session, notify }) {
       full_name: fullName.trim() || null,
       mobile_number: mobile.trim() || null,
       reason: reason.trim(),
+      photo: photo || null,
       blacklisted_by: session?.user?.email || 'Manager',
     }]);
     setSaving(false);
     if (error) { notify(error.message, 'error'); return; }
     notify('Added to blacklist', 'success');
-    setDocNumber(''); setFullName(''); setMobile(''); setReason('');
+    setDocNumber(''); setFullName(''); setMobile(''); setReason(''); setPhoto('');
     fetchRows();
   };
 
@@ -1170,6 +1194,21 @@ function BlacklistManager({ session, notify }) {
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this person blocked?" className={INPUT} />
           </div>
           <div className="sm:col-span-2">
+            <label className={LABEL}>Photo (optional — snap the ID or person)</label>
+            <div className="flex items-center gap-3">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-slate-300 hover:bg-white/10">
+                <Camera className="h-4 w-4" /> {photo ? 'Change photo' : 'Add photo'}
+                <input type="file" accept="image/*" capture="environment" onChange={onPhotoPick} className="hidden" />
+              </label>
+              {photo && (
+                <div className="flex items-center gap-2">
+                  <img src={photo} alt="blacklist" className="h-12 w-12 rounded-lg object-cover border border-white/10" />
+                  <button type="button" onClick={() => setPhoto('')} className="text-xs text-slate-400 hover:text-red-300">Remove</button>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="sm:col-span-2">
             <button type="submit" disabled={saving}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-5 py-2.5 text-sm font-semibold text-white hover:from-red-500 hover:to-rose-500 disabled:opacity-50">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />} Add to Blacklist
@@ -1194,7 +1233,9 @@ function BlacklistManager({ session, notify }) {
           {rows.map((r) => (
             <div key={r.id} className="rounded-xl border border-red-500/20 bg-red-950/20 p-3.5">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
+                <div className="flex items-start gap-3">
+                  {r.photo && <img src={r.photo} alt={r.full_name || 'blacklisted'} className="h-14 w-14 shrink-0 rounded-lg object-cover border border-red-500/30" />}
+                  <div>
                   <div className="flex items-center gap-2">
                     <UserX className="h-4 w-4 text-red-400" />
                     <span className="font-semibold text-white">{r.full_name || '—'}</span>
@@ -1208,6 +1249,7 @@ function BlacklistManager({ session, notify }) {
                   <p className="mt-1 text-[11px] text-slate-500">
                     Added {r.blacklisted_at ? fmtDate(r.blacklisted_at) : '—'}{r.blacklisted_by ? ` · by ${r.blacklisted_by}` : ''}
                   </p>
+                  </div>
                 </div>
                 <button onClick={() => removeEntry(r)}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10 hover:text-emerald-300">
