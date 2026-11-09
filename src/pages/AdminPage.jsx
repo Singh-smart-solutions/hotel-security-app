@@ -8,7 +8,7 @@ import {
   Shield, Users, Tag, FileText, AlertTriangle, LogOut,
   Plus, Trash2, Eye, EyeOff, RefreshCw, Download, Wifi,
   CheckCircle, CheckCircle2, XCircle, Clock, Loader2, ChevronDown, Search,
-  BarChart2, Phone, Edit2, Save, X, Key, Smartphone, Unlock, ClipboardList,
+  BarChart2, Phone, Edit2, Save, X, Key, Smartphone, Unlock, ClipboardList, Ban, UserX,
 } from 'lucide-react';
 
 /* ── Design tokens (violet/purple accent for admin) ─────── */
@@ -25,6 +25,7 @@ const TABS = [
   { id: 'passes',    label: 'Passes',     icon: Tag       },
   { id: 'logs',      label: 'Logs',       icon: FileText  },
   { id: 'handovers', label: 'Handovers',  icon: ClipboardList },
+  { id: 'blacklist', label: 'Blacklist',  icon: Ban },
 ];
 
 const TRAFFIC_LABELS = {
@@ -1098,6 +1099,129 @@ function HandoverLog({ notify }) {
   );
 }
 
+function BlacklistManager({ session, notify }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [docNumber, setDocNumber] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [mobile, setMobile] = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const fetchRows = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('blacklist')
+      .select('*').eq('is_active', true)
+      .order('blacklisted_at', { ascending: false }).limit(200);
+    setLoading(false);
+    if (error) { notify(error.message, 'error'); return; }
+    setRows(data || []);
+  }, [notify]);
+
+  useEffect(() => { fetchRows(); }, [fetchRows]);
+
+  const addEntry = async (e) => {
+    e.preventDefault();
+    if (!docNumber.trim() && !mobile.trim()) return notify('Enter an ID / document number or a mobile number', 'error');
+    if (!reason.trim()) return notify('A reason is required', 'error');
+    setSaving(true);
+    const { error } = await supabase.from('blacklist').insert([{
+      doc_number: docNumber.trim() || null,
+      full_name: fullName.trim() || null,
+      mobile_number: mobile.trim() || null,
+      reason: reason.trim(),
+      blacklisted_by: session?.user?.email || 'Manager',
+    }]);
+    setSaving(false);
+    if (error) { notify(error.message, 'error'); return; }
+    notify('Added to blacklist', 'success');
+    setDocNumber(''); setFullName(''); setMobile(''); setReason('');
+    fetchRows();
+  };
+
+  const removeEntry = async (row) => {
+    if (!window.confirm(`Remove ${row.full_name || row.doc_number || 'this person'} from the blacklist?`)) return;
+    const { error } = await supabase.from('blacklist').update({ is_active: false }).eq('id', row.id);
+    if (error) { notify(error.message, 'error'); return; }
+    notify('Removed from blacklist', 'success');
+    fetchRows();
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className={`${CARD} p-5`}>
+        <h3 className="mb-1 flex items-center gap-2 font-bold"><Ban className="h-4 w-4 text-red-400" /> Add to Blacklist</h3>
+        <p className="mb-4 text-xs text-slate-400">A blacklisted person is blocked at check-in when their ID or mobile is entered. Date and your name are recorded automatically.</p>
+        <form onSubmit={addEntry} className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className={LABEL}>ID / Document Number</label>
+            <input value={docNumber} onChange={(e) => setDocNumber(e.target.value)} placeholder="Emirates ID / passport #" className={INPUT} />
+          </div>
+          <div>
+            <label className={LABEL}>Full Name (optional)</label>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Person's name" className={INPUT} />
+          </div>
+          <div>
+            <label className={LABEL}>Mobile Number (optional)</label>
+            <input value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="05x xxx xxxx" className={INPUT} />
+          </div>
+          <div>
+            <label className={LABEL}>Reason *</label>
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this person blocked?" className={INPUT} />
+          </div>
+          <div className="sm:col-span-2">
+            <button type="submit" disabled={saving}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 px-5 py-2.5 text-sm font-semibold text-white hover:from-red-500 hover:to-rose-500 disabled:opacity-50">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />} Add to Blacklist
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <h3 className="font-bold text-white">Blacklisted ({rows.length})</h3>
+        <button onClick={fetchRows} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10">
+          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 p-6 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="rounded-xl border border-white/10 bg-white/5 p-8 text-center text-sm text-slate-400">No one is blacklisted.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.id} className="rounded-xl border border-red-500/20 bg-red-950/20 p-3.5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <UserX className="h-4 w-4 text-red-400" />
+                    <span className="font-semibold text-white">{r.full_name || '—'}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-300">
+                    {r.doc_number && <span className="font-mono">ID: {r.doc_number}</span>}
+                    {r.doc_number && r.mobile_number && <span className="text-slate-500"> · </span>}
+                    {r.mobile_number && <span className="font-mono">{r.mobile_number}</span>}
+                  </p>
+                  <p className="mt-1 text-sm text-red-100">Reason: {r.reason}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Added {r.blacklisted_at ? fmtDate(r.blacklisted_at) : '—'}{r.blacklisted_by ? ` · by ${r.blacklisted_by}` : ''}
+                  </p>
+                </div>
+                <button onClick={() => removeEntry(r)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-white/10 hover:text-emerald-300">
+                  <CheckCircle className="h-3.5 w-3.5" /> Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EmergencyModal({ onClose, notify }) {
   const [insideLogs, setInsideLogs] = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -1352,6 +1476,7 @@ export default function AdminPage({ notify }) {
         {tab === 'passes'    && <PassManager session={session} notify={notify} />}
         {tab === 'logs'      && <LogTable notify={notify} />}
         {tab === 'handovers' && <HandoverLog notify={notify} />}
+        {tab === 'blacklist' && <BlacklistManager session={session} notify={notify} />}
       </main>
 
       {emergencyOpen && <EmergencyModal onClose={() => setEmergencyOpen(false)} notify={notify} />}
